@@ -1,0 +1,155 @@
+/*
+ * Bud-Analysis viewer — page layout only.
+ * Tokens (base.css) + shared widgets (components.css) carry the design language;
+ * see STYLE.md. Viewer-specific widgets below (toggle pills, class legend, stats
+ * grid, image strip) are built from tokens and documented inline.
+ */
+
+/* viewer semantic colours: clearly readable in-band (green) / out-of-band (red) */
+:root, [data-theme="light"] { --pred-in: #1a9e4e; --pred-out: #de2d26; }
+[data-theme="dark"]        { --pred-in: #58d68d; --pred-out: #ff7b73; }
+
+/* ---------- Shell + header (H2 / T1) ---------- */
+.viewer { width: min(1500px, 96vw); margin: 1.5rem auto; }
+.viewer-header__top { display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; }
+.viewer-header h1 { margin: 0; font-size: var(--t1-size); font-weight: var(--t1-weight); color: var(--t1-color); }
+.viewer-header p { margin: 0.35rem 0 1.1rem; color: var(--t5-color); font-size: var(--t5-size); }
+
+.viewer-layout { display: grid; grid-template-columns: 268px 1fr; gap: 1rem; align-items: start; }
+.content { display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
+
+/* ---------- Filter panel (H3) ---------- */
+.filter-panel { position: sticky; top: 1rem; padding: 0.75rem 0.8rem; }
+.filter-panel h2 { margin: 0; font-size: var(--t2-size); font-weight: var(--t2-weight); color: var(--t2-color); }
+.filter-group { margin-top: 0.6rem; padding-top: 0.55rem; border-top: 1px solid var(--line); }
+.filter-group:first-of-type { margin-top: 0.45rem; border-top: 0; padding-top: 0; }
+.filter-group__head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.4rem; }
+.filter-group h3 { margin: 0 0 0.35rem; font-size: var(--t5-size); font-weight: 700; color: var(--t5-color); letter-spacing: 0.02em; text-transform: uppercase; }
+.filter-panel .form-label { margin: 0.25rem 0 0.12rem; }
+.field { display: flex; flex-direction: column; }
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+.check { display: flex; align-items: center; gap: 0.4rem; font-size: var(--t4-size); cursor: pointer; padding: 0.08rem 0; }
+.check-row { display: flex; flex-wrap: wrap; gap: 0.2rem 0.9rem; }
+.tol-row { display: grid; grid-template-columns: 72px 1fr; align-items: center; gap: 0.6rem; }
+
+/* keep the native select arrow from drifting far from short option text */
+select.input { padding-right: 1.7rem; text-overflow: ellipsis; }
+
+/* ---------- View chooser (H5) — bold text, fades when not shown (no bubble) ---------- */
+.toggles { display: flex; flex-wrap: wrap; gap: 0.2rem 0.8rem; }
+.toggle {
+  border: 0; background: transparent; color: var(--text);
+  padding: 0.1rem 0.1rem; font: inherit; font-size: var(--t6-size); font-weight: 700; cursor: pointer; opacity: 0.4;
+}
+.toggle.is-on { opacity: 1; }
+
+/* ---------- Fork combobox + tags (H5 / H6) ---------- */
+.combo { position: relative; }
+.drop {
+  display: none; position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 4px);
+  max-height: 220px; overflow-y: auto; background: var(--h6-surface);
+  border: 1px solid var(--control-border); border-radius: var(--radius-sm); box-shadow: var(--shadow-menu);
+}
+.drop .opt { padding: 0.4rem 0.55rem; font-size: var(--t5-size); cursor: pointer; }
+.drop .opt:hover { background: var(--control-bg-soft); }
+.tags { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.5rem; }
+.tag {
+  display: inline-flex; align-items: center; gap: 0.25rem;
+  border: 1px solid var(--success-border); background: var(--success-bg); color: var(--success-text);
+  border-radius: var(--radius-sm); padding: 0.1rem 0.2rem 0.1rem 0.45rem; font-size: var(--t6-size);
+}
+.tag-excl { border-color: var(--error-border); background: var(--error-bg); color: var(--error-text); }
+.tagx { display: inline-flex; align-items: center; justify-content: center; width: 1rem; height: 1rem; border: 0; background: transparent; cursor: pointer; color: inherit; font-size: var(--t5-size); line-height: 1; padding: 0; }
+
+/* ---------- Plot (H3) — chart + legend row share one box ---------- */
+.plot-wrap.panel { padding: 0.4rem; }
+.plot { height: 540px; }
+
+/* class legend — a row inside the plot box, under the x-axis label, left-aligned,
+   no bubble; underline (in the class colour) marks a class as shown. */
+.legend { display: flex; flex-wrap: wrap; align-items: center; gap: 0.2rem 0.9rem; padding: 0.15rem 0.4rem 0.2rem; }
+.legend-item {
+  display: inline-flex; align-items: center; gap: 0.3rem; font-size: var(--t6-size); color: var(--text);
+  cursor: pointer; user-select: none;
+}
+.legend-item.is-off { opacity: 0.35; }
+.legend-swatch { width: 0.6rem; height: 0.6rem; border-radius: 50%; flex-shrink: 0; }
+
+/* ---------- Summary stats (H3) ---------- */
+.stats { display: flex; flex-wrap: wrap; gap: 0.9rem 2.2rem; align-items: flex-start; }
+.stat-grp { display: flex; flex-direction: column; gap: 0.45rem; }
+.stat-gh { font-size: var(--t6-size); font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.stat-cells { display: flex; flex-wrap: wrap; gap: 0.6rem 1.3rem; }
+.stat { display: flex; flex-direction: column; line-height: 1.15; cursor: default; }
+.stat .sv { font-weight: 700; font-size: 1.15rem; color: var(--text-strong); }
+.stat .sl { font-size: var(--t6-size); color: var(--muted); }
+
+/* ---------- Detail (H3) ---------- */
+.hint { color: var(--t5-color); font-size: var(--t5-size); margin: 0; }
+.dhead { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; margin-bottom: 0.85rem; }
+.dhead h2 { margin: 0; font-size: var(--t2-size); font-weight: var(--t2-weight); }
+.dhead .swatch { width: 0.85rem; height: 0.85rem; border-radius: 50%; }
+.dmeta { color: var(--muted); font-size: var(--t5-size); }
+.dmeta b { color: var(--text-strong); font-weight: 700; }
+
+.round { border-top: 1px solid var(--line); padding: 0.8rem 0; }
+.round:first-of-type { border-top: 0; padding-top: 0.2rem; }
+.round-head { font-size: var(--t3-size); font-weight: 700; color: var(--accent); margin-bottom: 0.5rem; cursor: pointer; }
+.round-head::before { content: "▾"; display: inline-block; width: 1em; color: var(--muted); font-size: var(--t6-size); }
+.round.is-collapsed > .round-head { margin-bottom: 0; }
+.round.is-collapsed > .round-head::before { content: "▸"; }
+.round.is-collapsed > .thumbs { display: none; }
+.fork-title { cursor: pointer; }
+.thumbs { display: flex; flex-wrap: wrap; gap: 0.7rem; align-items: flex-start; }
+.thumb { margin: 0; width: 116px; text-align: center; }
+.thumb img { width: 116px; height: 116px; object-fit: cover; border: 1px solid var(--h4-border); border-radius: var(--radius-sm); background: var(--panel); }
+.thumb figcaption { font-size: var(--t6-size); color: var(--muted); margin-top: 0.25rem; }
+.thumb .in { color: var(--pred-in); font-weight: 600; }
+.thumb .out { color: var(--pred-out); font-weight: 600; }
+.thumb.faded img { opacity: 0.3; }
+.thumb.faded figcaption { color: var(--text); }
+
+/* round summary — plain text, vertically centred against the images (116px), not the captions */
+.round-summary { align-self: flex-start; height: 116px; display: flex; flex-direction: column; justify-content: center; gap: 0.35rem; padding-left: 0.7rem; }
+.rs-row { display: flex; align-items: baseline; gap: 0.45rem; }
+.rs-label { min-width: 4.8rem; text-align: right; font-size: var(--t5-size); color: var(--muted); }
+.rs-val { font-size: var(--t3-size); font-weight: 700; }
+.rs-val.in { color: var(--pred-in); }
+.rs-val.out { color: var(--pred-out); }
+
+/* ---------- Collapsible filter group ---------- */
+.fold > summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.fold > summary::-webkit-details-marker { display: none; }
+.fold > summary::after { content: "▸"; color: var(--muted); font-size: var(--t6-size); }
+.fold[open] > summary::after { content: "▾"; }
+.fold > summary h3 { margin: 0; }
+.fold > .combo, .fold > .fork-foot { margin-top: 0.5rem; }
+.fork-foot { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem; }
+
+/* ---------- Reassign strip (in the detail header) ---------- */
+.reassign { display: flex; align-items: center; flex-wrap: wrap; gap: 0.3rem; margin-left: auto; }
+.reassign-label { font-size: var(--t5-size); color: var(--muted); margin-right: 0.15rem; }
+.reassign-btn {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  border: 0; background: transparent; color: var(--muted);
+  padding: 0.12rem 0.1rem; font: inherit; font-size: var(--t5-size); cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.reassign-btn:hover { color: var(--text); }
+.reassign-btn.is-active { color: var(--text-strong); font-weight: 700; }   /* underline colour set inline = class colour */
+.reassign-btn .rb-sw { width: 0.7rem; height: 0.7rem; border-radius: 50%; }
+
+/* ---------- Change log (H3) ---------- */
+.cl-head { display: flex; align-items: center; gap: 0.7rem; margin-bottom: 0.6rem; }
+.cl-head h3 { margin: 0; font-size: var(--t3-size); font-weight: 700; color: var(--accent); }
+.cl-head .btn { margin-left: auto; }
+.cl-list { display: flex; flex-direction: column; gap: 0.25rem; }
+.cl-row { display: flex; align-items: center; gap: 0.5rem; font-size: var(--t4-size); padding: 0.25rem 0.4rem; border-radius: var(--radius-sm); cursor: pointer; }
+.cl-row:hover { background: var(--row-hover); }
+.cl-row .cl-swatch { width: 0.7rem; height: 0.7rem; border-radius: 50%; }
+.cl-row .btn { margin-left: auto; }
+
+@media (max-width: 900px) {
+  .viewer-layout { grid-template-columns: 1fr; }
+  .filter-panel { position: static; }
+}

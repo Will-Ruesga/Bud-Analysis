@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bud Analysis Viewer</title>
+    <script>
+      (function () {
+        var saved = localStorage.getItem("theme");
+        var theme = saved || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/components.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/viewer.css') }}" />
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+  </head>
+  <body>
+    <main class="viewer">
+      <header class="viewer-header">
+        <div class="viewer-header__top">
+          <h1>Bud Analysis Viewer</h1>
+          <button type="button" class="btn" data-theme-toggle aria-label="Toggle theme"><span data-theme-icon></span></button>
+        </div>
+        <p>Predicted vs. true ripeness for a trained run — filter, aggregate, and inspect each flower.</p>
+      </header>
+
+      <div class="viewer-layout">
+        <aside class="filter-panel panel" aria-label="Filters">
+          <h2>Filters</h2>
+
+          <section class="filter-group">
+            <div class="field">
+              <label class="form-label" for="run">Run</label>
+              <select id="run" class="input"></select>
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label class="form-label" for="aggregator">Head</label>
+                <select id="aggregator" class="input"></select>
+              </div>
+              <div class="field">
+                <label class="form-label" for="split">Split</label>
+                <select id="split" class="input">
+                  <option value="test" selected>Test</option>
+                  <option value="val">Validation</option>
+                  <option value="train">Train</option>
+                  <option value="all">All</option>
+                </select>
+              </div>
+            </div>
+          </section>
+
+          <section class="filter-group">
+            <h3>Aggregate</h3>
+            <div class="check-row">
+              <label class="check" title="one point per round — MIL mean over the selected views"><input type="checkbox" id="agg-views" checked /> Mean views</label>
+              <label class="check" title="collapse a fork's rounds — one point per fork"><input type="checkbox" id="agg-forks" /> Mean forks</label>
+            </div>
+          </section>
+
+          <section class="filter-group">
+            <h3>Tolerance band</h3>
+            <div class="tol-row">
+              <input type="number" id="tol-num" class="input" min="0" max="0.5" step="0.01" value="0.1" />
+              <label class="check"><input type="checkbox" id="outliers-only" /> Outliers only</label>
+            </div>
+          </section>
+
+          <section class="filter-group">
+            <h3>Views</h3>
+            <div id="views" class="toggles"></div>
+          </section>
+
+          <details class="filter-group fold">
+            <summary><h3>Forks</h3></summary>
+            <div class="combo">
+              <input id="fork-input" class="input" autocomplete="off" placeholder="pick or type a fork…" />
+              <div id="fork-drop" class="drop"></div>
+            </div>
+            <div class="fork-foot">
+              <div id="fork-tags" class="tags"></div>
+              <button type="button" id="forks-clear" class="btn btn--sm">All</button>
+            </div>
+          </details>
+        </aside>
+
+        <section class="content">
+          <p id="status" class="hint"></p>
+          <div class="plot-wrap panel">
+            <div id="plot" class="plot"></div>
+            <div id="legend" class="legend"></div>
+          </div>
+          <div id="stats" class="stats panel"></div>
+          <div id="details" class="details panel">
+            <p class="hint">Click a point to inspect that fork's views.</p>
+          </div>
+          <div id="changelog" class="changelog panel" hidden>
+            <div class="cl-head">
+              <h3>Label changes</h3>
+              <span id="cl-summary" class="hint"></span>
+              <button id="cl-save" class="btn btn--soft">Save CSV</button>
+            </div>
+            <div id="cl-list" class="cl-list"></div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <script src="{{ url_for('static', filename='theme.js') }}"></script>
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+</html>

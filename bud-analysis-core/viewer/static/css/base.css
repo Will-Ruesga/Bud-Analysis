@@ -1,0 +1,225 @@
+/*
+ * Tokens, body, and markdown defaults.
+ * Color tokens are theme-scoped: light values live under [data-theme="light"]
+ * (also the default), dark values under [data-theme="dark"].
+ * Structural tokens (radius, spacing, typography) are theme-independent.
+ */
+
+:root {
+  --font-family-base: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  /* Typography tiers (T1-T6) */
+  --t1-size: clamp(1.65rem, 2.4vw, 2.1rem);
+  --t1-weight: 700;
+  --t1-style: normal;
+
+  --t2-size: 1.1rem;
+  --t2-weight: 700;
+  --t2-style: normal;
+
+  --t3-size: 0.95rem;
+  --t3-weight: 700;
+  --t3-style: normal;
+
+  --t4-size: 0.9rem;
+  --t4-weight: 400;
+  --t4-style: normal;
+
+  --t5-size: 0.84rem;
+  --t5-weight: 400;
+  --t5-style: normal;
+
+  --t6-size: 0.82rem;
+  --t6-weight: 400;
+  --t6-style: normal;
+
+  /* Layout tokens */
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
+
+  --space-1: 0.25rem;
+  --space-2: 0.4rem;
+  --space-3: 0.55rem;
+  --space-4: 0.75rem;
+  --space-5: 1rem;
+}
+
+/* ---------- Light theme (default) ---------- */
+
+:root,
+[data-theme="light"] {
+  --bg: #eceff4;
+  --bg-glow-1: #f7fbff;
+  --bg-glow-2: #e2e9f5;
+
+  --panel: #f9fafb;
+  --panel-strong: #ffffff;
+  --line: #c9d3df;
+  --line-strong: #95a8bd;
+
+  --text: #152336;
+  --text-strong: #132844;
+  --muted: #5e6f83;
+  --accent: #2a5c97;
+  --accent-soft: #dce8f7;
+
+  --h1-surface: #eceff4;
+  --h2-surface: transparent;
+  --h3-surface: #ffffff;
+  --h4-surface: #f9fafb;
+  --h5-surface: #ffffff;
+  --h6-surface: #ffffff;
+  --h3-border: #95a8bd;
+  --h4-border: #c9d3df;
+
+  --control-bg: #ffffff;
+  --control-bg-soft: #ecf3fb;
+  --control-text: #3f5674;
+  --control-text-strong: #1f4066;
+  --control-border: #95a8bd;
+
+  --success-bg: #eaf9ee;
+  --success-border: #8fce9d;
+  --success-text: #20573b;
+  --error-bg: #fdeeed;
+  --error-border: #e4a7a2;
+  --error-text: #7c2a2a;
+
+  --row-header-bg-from: #f5f8fc;
+  --row-header-bg-to: #ebf1f8;
+  --row-hover: #f4f7fb;
+  --focus-ring: #9bb8dc;
+
+  --chip-icon-neutral: #9cb0c7;
+  --chip-icon-include: #2a8a50;
+  --chip-icon-exclude: #c64343;
+
+  --shadow-menu: 0 4px 14px rgba(17, 38, 64, 0.14);
+
+  /* Full-page background — reuse wherever a surface must match the page exactly */
+  --page-bg:
+    radial-gradient(circle at top left, var(--bg-glow-1) 0%, transparent 42%),
+    radial-gradient(circle at bottom right, var(--bg-glow-2) 0%, transparent 45%),
+    var(--bg);
+
+  /* Tier text colors derive from the palette above */
+  --t1-color: var(--text);
+  --t2-color: var(--text);
+  --t3-color: var(--accent);
+  --t4-color: var(--text);
+  --t5-color: var(--muted);
+  --t6-color: var(--muted);
+}
+
+/* ---------- Dark theme ---------- */
+
+[data-theme="dark"] {
+  --bg: #161a22;
+  --bg-glow-1: rgba(120, 160, 220, 0.05);
+  --bg-glow-2: rgba(60, 90, 140, 0.07);
+
+  --panel: #1f2530;
+  --panel-strong: #262d3a;
+  --line: #39414f;
+  --line-strong: #4d5a6e;
+
+  --text: #e6ecf4;
+  --text-strong: #f3f6fb;
+  --muted: #9aa6b8;
+  --accent: #7fb0e8;
+  --accent-soft: #23344a;
+
+  --h1-surface: #161a22;
+  --h2-surface: transparent;
+  --h3-surface: #262d3a;
+  --h4-surface: #1f2530;
+  --h5-surface: #262d3a;
+  --h6-surface: #2c3442;
+  --h3-border: #4d5a6e;
+  --h4-border: #39414f;
+
+  --control-bg: #262d3a;
+  --control-bg-soft: #2c3744;
+  --control-text: #cdd7e6;
+  --control-text-strong: #e6ecf4;
+  --control-border: #4d5a6e;
+
+  --success-bg: #1e3a28;
+  --success-border: #3a6a4a;
+  --success-text: #7fd396;
+  --error-bg: #3a1f1f;
+  --error-border: #7a3a36;
+  --error-text: #f0a39e;
+
+  --row-header-bg-from: #232a36;
+  --row-header-bg-to: #1c222c;
+  --row-hover: #2c3442;
+  --focus-ring: #5d86b8;
+
+  --chip-icon-neutral: #6f7f95;
+  --chip-icon-include: #7fd396;
+  --chip-icon-exclude: #f0a39e;
+
+  --shadow-menu: 0 4px 14px rgba(0, 0, 0, 0.4);
+
+  --page-bg:
+    radial-gradient(circle at top left, var(--bg-glow-1) 0%, transparent 42%),
+    radial-gradient(circle at bottom right, var(--bg-glow-2) 0%, transparent 45%),
+    var(--bg);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--page-bg);
+  color: var(--text);
+  font-family: var(--font-family-base);
+  font-size: var(--t4-size);
+  font-weight: var(--t4-weight);
+  font-style: var(--t4-style);
+}
+
+.markdown-body :first-child {
+  margin-top: 0;
+}
+
+.markdown-body :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-body p {
+  margin: 0.35rem 0;
+}
+
+.markdown-body ul {
+  margin: 0.35rem 0 0.15rem;
+  padding-left: 1.2rem;
+}
+
+.markdown-body h3 {
+  margin: 0.6rem 0 0.35rem;
+  font-size: var(--t3-size);
+  font-weight: var(--t3-weight);
+  color: var(--t3-color);
+}
+
+.markdown-body strong {
+  color: var(--text-strong);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}

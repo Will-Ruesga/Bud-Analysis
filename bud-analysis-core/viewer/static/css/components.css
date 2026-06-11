@@ -1,0 +1,344 @@
+/*
+ * Shared components. Source of truth: ../../../style.md
+ * Every class here maps to a tier (H1-H6 for surfaces, T1-T6 for text).
+ * Page CSS files (explorer.css, recipe.css) must NOT redefine these.
+ */
+
+/* ---------- Panels (H3 / H4) ---------- */
+
+.panel {
+  border: 1px solid var(--h3-border);
+  border-radius: var(--radius-xl);
+  background: var(--h3-surface);
+  padding: 0.9rem;
+}
+
+.panel--soft {
+  border: 1px solid var(--h4-border);
+  border-radius: var(--radius-md);
+  background: var(--h4-surface);
+  padding: 0.75rem 0.8rem;
+}
+
+/* ---------- Buttons (H5) ---------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-sm);
+  background: var(--control-bg);
+  color: var(--control-text);
+  font: inherit;
+  font-size: var(--t5-size);
+  font-weight: var(--t5-weight);
+  line-height: 1.2;
+  padding: 0.42rem 0.62rem;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn--soft {
+  background: var(--control-bg-soft);
+  color: var(--control-text-strong);
+}
+
+.btn--sm {
+  padding: 0.28rem 0.5rem;
+}
+
+.btn--lg {
+  font-size: var(--t4-size);
+  padding: 0.5rem 0.75rem;
+  min-height: 2.2rem;
+}
+
+.btn--icon {
+  width: 2rem;
+  height: 2rem;
+  min-width: 2rem;
+  padding: 0;
+}
+
+.btn--danger {
+  color: var(--error-text);
+}
+
+.btn--success {
+  color: var(--success-text);
+}
+
+/* ---------- Form controls (H5) ---------- */
+
+.input {
+  width: 100%;
+  border: 1px solid var(--h4-border);
+  border-radius: var(--radius-sm);
+  background: var(--control-bg);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t4-size);
+  padding: 0.45rem 0.55rem;
+}
+
+.input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  outline: none;
+}
+
+.input--lg {
+  border-color: var(--line-strong);
+  border-radius: var(--radius-md);
+  padding: 0.68rem 0.85rem;
+}
+
+.form-label {
+  display: block;
+  margin: 0.45rem 0 0.2rem;
+  color: var(--t5-color);
+  font-size: var(--t5-size);
+  font-weight: var(--t5-weight);
+}
+
+.form-helper {
+  margin: 0.3rem 0 0.7rem;
+  color: var(--t5-color);
+  font-size: var(--t5-size);
+}
+
+.form-error {
+  border: 1px solid var(--error-border);
+  background: var(--error-bg);
+  color: var(--error-text);
+  border-radius: var(--radius-sm);
+  padding: 0.45rem 0.55rem;
+  font-size: var(--t6-size);
+}
+
+/* ---------- Chips (H5) ---------- */
+
+.chip {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--h5-surface);
+  color: var(--t4-color);
+  padding: 0.36rem 0.5rem;
+  margin-bottom: 0.35rem;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.chip__icon {
+  width: 1rem;
+  font-size: var(--t4-size);
+  text-align: center;
+}
+
+.chip[data-state="neutral"] .chip__icon::before {
+  content: "•";
+  color: var(--chip-icon-neutral);
+}
+
+.chip[data-state="include"] {
+  background: var(--success-bg);
+  border-color: var(--success-border);
+  color: var(--success-text);
+}
+
+.chip[data-state="include"] .chip__icon::before {
+  content: "✓";
+  color: var(--chip-icon-include);
+}
+
+.chip[data-state="exclude"] {
+  background: var(--error-bg);
+  border-color: var(--error-border);
+  color: var(--error-text);
+}
+
+.chip[data-state="exclude"] .chip__icon::before {
+  content: "✕";
+  color: var(--chip-icon-exclude);
+}
+
+/* ---------- Segmented control (H5) ---------- */
+
+.segment {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+  background: transparent;
+  flex-shrink: 0;
+}
+
+.segment__btn {
+  border: 0;
+  background: transparent;
+  color: var(--t5-color);
+  font-size: var(--t6-size);
+  font-family: inherit;
+  padding: 0.2rem 0.5rem;
+  cursor: pointer;
+}
+
+.segment__btn.is-active {
+  background: var(--accent-soft);
+  color: var(--control-text-strong);
+  font-weight: 700;
+}
+
+/* ---------- Menu / overlay (H6) ---------- */
+
+.menu {
+  position: fixed;
+  top: 0;
+  left: 0;
+  min-width: 110px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-sm);
+  background: var(--h6-surface);
+  padding: 0.2rem;
+  box-shadow: var(--shadow-menu);
+  z-index: 40;
+}
+
+.menu form {
+  margin: 0;
+}
+
+.menu__item {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--t4-color);
+  text-align: left;
+  text-decoration: none;
+  font: inherit;
+  font-size: var(--t5-size);
+  padding: 0.35rem 0.45rem;
+  cursor: pointer;
+}
+
+.menu__item:hover {
+  background: var(--control-bg-soft);
+}
+
+.menu__item--danger {
+  color: var(--error-text);
+}
+
+/* ---------- Ingredient picker (chip-in-input + autocomplete) ---------- */
+
+.ingredient-picker {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  width: 100%;
+  min-height: 2.55rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--control-bg);
+  padding: 0.3rem 0.5rem;
+  cursor: text;
+}
+
+.ingredient-picker:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.ingredient-picker__input {
+  flex: 1 1 80px;
+  min-width: 80px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t5-size);
+  padding: 0.15rem 0;
+}
+
+.ingredient-picker__chip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--h5-surface);
+  color: var(--text);
+  padding: 0.1rem 0.4rem;
+  font-size: var(--t6-size);
+  user-select: none;
+  cursor: pointer;
+}
+
+.ingredient-picker__chip[data-state="include"] {
+  background: var(--success-bg);
+  border-color: var(--success-border);
+  color: var(--success-text);
+}
+
+.ingredient-picker__chip[data-state="exclude"] {
+  background: var(--error-bg);
+  border-color: var(--error-border);
+  color: var(--error-text);
+}
+
+.ingredient-picker__dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-sm);
+  background: var(--h6-surface);
+  box-shadow: var(--shadow-menu);
+  z-index: 30;
+}
+
+.ingredient-picker__option {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.4rem 0.55rem;
+  font-size: var(--t5-size);
+  color: var(--t4-color);
+  cursor: pointer;
+}
+
+.ingredient-picker__option.is-active,
+.ingredient-picker__option:hover {
+  background: var(--control-bg-soft);
+}
+
+.ingredient-picker__option-count {
+  color: var(--muted);
+  font-size: var(--t6-size);
+}
+
+.ingredient-picker__empty {
+  padding: 0.5rem 0.55rem;
+  font-size: var(--t6-size);
+  color: var(--muted);
+  font-style: italic;
+}

@@ -1,0 +1,32 @@
+# Data + generated runs
+output/
+*.npy
+
+# Model weights
+*.pth
+checkpoints/
+bud-analysis-core/checkpoints/
+
+# Tests and docs
+bud-analysis-core/docs/
+bud-analysis-core/tests/
+
+# DINOv3
+bud-analysis-core/core/dinov3/
+
+# Claude
+.claude/
+bud-analysis-core/CLAUDE.md
+
+# Python envs / caches
+.venv*/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+*.pyc
+
+# Misc
+bud-analysis-core/MODEL_ROBUSTNESS_GOAL.md
+ripeness/ideas.txt
+
+

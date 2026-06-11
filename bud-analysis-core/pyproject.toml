@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bud-analysis-core"
+version = "0.0.1"
+description = "Task-agnostic framework: frozen DINOv3 backbone + regression heads + Optuna sweep + unified ONNX export."
+requires-python = ">=3.10"
+readme = "README.md"
+dependencies = [
+    "numpy",
+    "pandas",
+    "pillow",
+    "torch",
+    "torchvision",
+    "torchmetrics",
+    "termcolor",
+    "optuna",
+    "tqdm",
+    "matplotlib",
+    "scikit-learn",
+    "umap-learn",
+    "onnx",
+    "Flask>=3.0.0",  # the bundled viewer app (bud-analysis-core/viewer) — core ships with it
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "onnxruntime",
+]
+
+[tool.setuptools]
+packages = ["core"]
