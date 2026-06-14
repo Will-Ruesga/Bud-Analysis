@@ -18,7 +18,7 @@ TASK = "ripeness"
 # Raw data (dataset path is passed at runtime: `python prepare.py --data_dir <path>`)
 # Maps the trailing filename index `_0.._4` → view name. The rig captures the
 # four sides first and the top-down view LAST (`_4`), confirmed by eye on the
-# images — NOT `_0`. `top` must be correct: the `top_only` aggregator uses it.
+# images — NOT `_0`. The mapping must be right so each view label is accurate.
 VIEWS = ["side_0", "side_1", "side_2", "side_3", "top"]
 
 # Backbones. Checkpoints are vendored inside the installed core package, so paths
@@ -37,15 +37,7 @@ BACKBONE_CHECKPOINTS = {
 # explicit dict only if the classes aren't evenly-spaced numbers.
 TARGETS = None
 
-# How to turn a frozen-backbone image into its (D,) embedding.
-#   "cls"          — DINOv3's CLS token (global summary).
-#   "masked_mean"  — average only the patch tokens overlapping the bud, using
-#                    the image's alpha mask (drops background patches).
-# A/B on NancyNora: cls 0.148 vs masked_mean 0.153 test RMSE → cls wins. The
-# background is already black, so CLS (a learned summary) beat a plain masked mean.
-POOLING = "cls"
-
-# Default head spec (fallback for fields Optuna does not sweep)
+# Head spec — one fixed pipeline (mil_mean: all views, late fusion).
 HEAD_SPEC = HeadSpec(aggregator_name="mil_mean", hidden_dims=(512, 256), dropout=0.2)
 
 # Hyperparameters (task-side train.py)
@@ -53,9 +45,22 @@ HPARAMS = {
     "lr": 1e-3,
     "epochs": 50,
     "seed": 42,
-    "loss": "mse",
+    # Robustness-aware model selection: trials are ranked by
+    # `val_rmse + robustness_beta * val_view_range`, so an accurate-but-brittle
+    # winner is rejected automatically. 0.0 = accuracy only.
+    "robustness_beta": 0.5,
 }
 
-# Optuna search space — aggregator_name required
+# Optuna search space. The compared dimension is the LOSS (one kept winner per
+# loss → `comparison.png` shows them side by side); everything else is searched
+# within each.
+#   loss                — accuracy term: "mse" vs "huber" (the consistency penalty
+#                         rides on top of either).
+#   lambda_consistency  — weight of the per-fork view-variance penalty added to the
+#                         training loss; [lo, hi] is searched. Teaches the head to
+#                         give the same ripeness across views. [0, 0] disables it.
 OPT_N_TRIALS = 100
-OPT_SEARCH_SPACE = {"aggregator_name": ["top_only", "mil_mean"]}
+OPT_SEARCH_SPACE = {
+    "loss": ["mse", "huber"],
+    "lambda_consistency": [0.0, 0.5],
+}

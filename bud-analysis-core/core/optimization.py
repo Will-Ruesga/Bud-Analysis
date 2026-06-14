@@ -36,39 +36,40 @@ def build(
     return optimizer, scheduler
 
 
-def keep_best_per_aggregator(
+def keep_best_per_variant(
     ctx: RunContext,
     study_dir: Path,
-    metric_key: str = "val_rmse",
+    group_key: str = "loss",
+    metric_key: str = "selection_score",
 ) -> dict[str, Path]:
-    """Promote the best trial of each aggregator, delete the rest.
+    """Promote the best trial of each variant, delete the rest.
 
-    Each subdir of `study_dir` is one trial with a `metrics.json` carrying
-    `head_spec.aggregator_name` and `metric_key`. For each aggregator the trial
-    with the lowest `metric_key` is moved to `ctx.aggregator_dir(<aggregator>)`;
-    the entire scratch `study_dir` is then removed. Returns
-    `{aggregator_name: kept_path}`.
+    The study compares one dimension (`group_key`, e.g. `loss`). Each subdir of
+    `study_dir` is one trial whose `metrics.json` carries `group_key` and
+    `metric_key`. For each distinct `group_key` value the trial with the lowest
+    `metric_key` is moved to `ctx.variant_dir(<value>)`; the entire scratch
+    `study_dir` is then removed. Returns `{group_value: kept_path}`.
     """
     study_dir = Path(study_dir)
 
-    best: dict[str, tuple[float, Path]] = {}  # aggregator -> (value, trial_dir)
+    best: dict[str, tuple[float, Path]] = {}  # group value -> (metric, trial_dir)
     for trial_dir in sorted(study_dir.iterdir()):
         if not trial_dir.is_dir():
             continue
         metrics = json.loads((trial_dir / "metrics.json").read_text())
-        agg = metrics["head_spec"]["aggregator_name"]
-        value = metrics[metric_key]
-        if agg not in best or value < best[agg][0]:
-            best[agg] = (value, trial_dir)
+        value = str(metrics[group_key])
+        score = metrics[metric_key]
+        if value not in best or score < best[value][0]:
+            best[value] = (score, trial_dir)
 
     kept: dict[str, Path] = {}
-    for agg, (_, trial_dir) in best.items():
-        dest = ctx.aggregator_dir(agg)
+    for value, (_, trial_dir) in best.items():
+        dest = ctx.variant_dir(value)
         if dest.exists():
             shutil.rmtree(dest)
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(trial_dir), str(dest))
-        kept[agg] = dest
+        kept[value] = dest
 
     # Winners are moved out; the scratch dir (losers + empty) is consumed whole.
     if study_dir.exists():
@@ -79,35 +80,37 @@ def keep_best_per_aggregator(
 def write_study_summary(
     study: optuna.Study,
     out_dir: Path,
-    metric_key: str = "val_rmse",
+    group_param: str = "loss",
+    metric_key: str = "selection_score",
 ) -> Path:
     """Write `<out_dir>/study_summary.json` (canonical schema).
 
     `trials[]` holds only the survivors — the best completed trial per
-    aggregator — while `n_trials`/`n_completed` reflect the whole study.
+    `group_param` value (the compared dimension) — while `n_trials`/`n_completed`
+    reflect the whole study.
     """
     minimize = study.direction == optuna.study.StudyDirection.MINIMIZE
     completed = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
 
     best: dict[str, optuna.trial.FrozenTrial] = {}
     for t in completed:
-        agg = t.params.get("aggregator_name")
-        if agg is None:
+        value = t.params.get(group_param)
+        if value is None:
             continue
-        if agg not in best or (
-            t.value < best[agg].value if minimize else t.value > best[agg].value
+        if value not in best or (
+            t.value < best[value].value if minimize else t.value > best[value].value
         ):
-            best[agg] = t
+            best[value] = t
 
     trials = [
         {
-            "kept_as": agg,
-            "trial_number": best[agg].number,
-            "value": best[agg].value,
-            "params": best[agg].params,
-            "state": best[agg].state.name,
+            "kept_as": value,
+            "trial_number": best[value].number,
+            "value": best[value].value,
+            "params": best[value].params,
+            "state": best[value].state.name,
         }
-        for agg in sorted(best)
+        for value in sorted(best)
     ]
 
     summary = {
@@ -116,7 +119,8 @@ def write_study_summary(
         "direction": "minimize" if minimize else "maximize",
         "n_trials": len(study.trials),
         "n_completed": len(completed),
-        "aggregators_kept": sorted(best),
+        "compared": group_param,
+        "variants_kept": sorted(best),
         "best_value": study.best_value,
         "best_params": study.best_params,
         "trials": trials,

@@ -160,7 +160,7 @@ def _clear_stale_cache(ctx, data_dir: Path) -> None:
         print(f"dataset changed ({old} -> {data_dir}); cleared stale emb/ + {ctx.task}/")
 
 
-def _config_snapshot(config, pooling: str) -> dict:
+def _config_snapshot(config) -> dict:
     """The training config frozen into the manifest for train/export to read."""
     return {
         "head_spec": {
@@ -171,11 +171,10 @@ def _config_snapshot(config, pooling: str) -> dict:
         "hparams": config.HPARAMS,
         "opt_search_space": config.OPT_SEARCH_SPACE,
         "opt_n_trials": config.OPT_N_TRIALS,
-        "pooling": pooling,
     }
 
 
-def main(config, data_dir, backbone=None, cultivar=None, views=None, pooling=None,
+def main(config, data_dir, backbone=None, cultivar=None, views=None,
          val_ratio=0.15, test_ratio=0.15, seed=None):
     """Scan the dataset → write `<run>/prep/{index.csv, info.json}`; return the run dir.
 
@@ -187,7 +186,6 @@ def main(config, data_dir, backbone=None, cultivar=None, views=None, pooling=Non
     `parse_views`); when None it falls back to `config.VIEWS` (positional).
     """
     backbone = backbone or config.BACKBONE_NAME
-    pooling = pooling or getattr(config, "POOLING", "cls")
     view_map = views if views is not None else {i: v for i, v in enumerate(config.VIEWS)}
     view_names = [view_map[i] for i in sorted(view_map)]
     ctx = RunContext(
@@ -209,7 +207,7 @@ def main(config, data_dir, backbone=None, cultivar=None, views=None, pooling=Non
         test_ratio=test_ratio,
         seed=seed if seed is not None else config.HPARAMS["seed"],
         discover=scan,
-        extra=_config_snapshot(config, pooling),
+        extra=_config_snapshot(config),
     )
     plotting.plot_dataset_distribution(ctx, df)
     return ctx.root
@@ -225,8 +223,6 @@ if __name__ == "__main__":
         help="backbone to use for this run",
     )
     ap.add_argument("--cultivar", "-c", default=cfg.CULTIVAR, help="run/cultivar name")
-    ap.add_argument("--pooling", "-p", default=cfg.POOLING, choices=["cls", "masked_mean"],
-                    help="embedding pooling: cls token or alpha-masked patch mean")
     ap.add_argument("--views", "-v", default=None,
                     help="view groups, e.g. 'side: 0 1 2 3, top: 4'; omit to be prompted")
     ap.add_argument("--val_ratio", type=float, default=0.15)
@@ -246,6 +242,6 @@ if __name__ == "__main__":
 
     run = main(
         cfg, data_dir=a.data_dir, backbone=a.backbone, cultivar=a.cultivar, views=view_map,
-        pooling=a.pooling, val_ratio=a.val_ratio, test_ratio=a.test_ratio, seed=a.seed,
+        val_ratio=a.val_ratio, test_ratio=a.test_ratio, seed=a.seed,
     )
     print(f"prepared run: {run}")

@@ -1,9 +1,9 @@
 """Unified ONNX export: N trained heads sharing one frozen backbone.
 
-Walks `<task>/<aggregator>/` dirs (the filesystem is the registry), rebuilds
-each head from its `metrics.json` + `head.pt`, and traces a single graph:
-preprocess → shared backbone (per view) → per-head gather + reduce → concat.
-The MIL reduction reuses `heads.mil_pool`, so exported and trained pooling are
+Walks `<task>/<variant>/` dirs (the filesystem is the registry), rebuilds each
+head from its `metrics.json` + `head.pt`, and traces a single graph: preprocess →
+shared backbone (per view) → per-head `mil_pool` → concat. Every head consumes all
+views (the one mil_mean late-fusion pipeline), so exported and trained pooling are
 the same op. See docs/core/export.md.
 """
 
@@ -13,7 +13,7 @@ from pathlib import Path
 import torch
 from torch import nn
 
-from core import aggregators, backbones, heads as heads_module
+from core import backbones, heads as heads_module
 from core.heads import mil_pool
 from core.data import CANONICAL_VIEW_TYPES
 from core.run_context import RunContext
@@ -29,8 +29,8 @@ def export(
 ) -> Path:
     """Export the requested heads into one self-contained ONNX file.
 
-    `heads` is a list of `(task, aggregator_name)`; `aggregator_name == "auto"`
-    resolves to the lowest-`val_rmse` aggregator under `<task>/`. Defaults to
+    `heads` is a list of `(task, variant)`; `variant == "auto"` resolves to the
+    lowest-`selection_score` variant under `<task>/`. Defaults to
     `[(ctx.task, "auto")]`. Returns the written `.onnx` path.
     """
     if heads is None:
@@ -46,11 +46,10 @@ def export(
         raise ValueError("ctx.backbone_checkpoint is None; cannot load the backbone to export.")
     backbone = backbones.load_dinov3(ctx.backbone_name, ctx.backbone_checkpoint, device)
 
-    union = [v for v in CANONICAL_VIEW_TYPES
-             if any(v in aggregators.VIEW_TYPES[agg] for _, agg, _, _ in resolved)]
     variant = backbones._VARIANTS[ctx.backbone_name]
 
-    graph = _ExportGraph(backbone, resolved, union, ctx.backbone_name).to(device).eval()
+    # The one pipeline feeds every head all views (mil_mean late fusion).
+    graph = _ExportGraph(backbone, resolved, ctx.backbone_name).to(device).eval()
 
     if output_path is None:
         output_path = ctx.onnx_dir / _default_filename(ctx, resolved)
@@ -58,7 +57,7 @@ def export(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     dummy = torch.zeros(
-        1, len(union), variant["image_size"], variant["image_size"], 3, device=device
+        1, len(CANONICAL_VIEW_TYPES), variant["image_size"], variant["image_size"], 3, device=device
     )
     torch.onnx.export(
         graph,
@@ -74,7 +73,7 @@ def export(
 
 
 def _resolve_head(ctx: RunContext, task: str, agg_name: str):
-    """Resolve one (task, aggregator) → (task, agg_name, head_spec, head_module)."""
+    """Resolve one (task, variant) → (task, variant, head_spec, head_module)."""
     task_dir = ctx.root / f"{task}-results"
     if agg_name == "auto":
         agg_name = _auto_select(task_dir)
@@ -100,16 +99,18 @@ def _resolve_head(ctx: RunContext, task: str, agg_name: str):
 
 
 def _auto_select(task_dir: Path) -> str:
-    """Aggregator dir with the lowest val_rmse (alphabetical tie-break)."""
+    """Variant dir with the lowest `selection_score` (val_rmse fallback for legacy
+    runs; alphabetical tie-break)."""
     candidates = []
     if task_dir.exists():
         for d in sorted(task_dir.iterdir()):
             mp = d / "metrics.json"
             if d.is_dir() and mp.exists():
-                val = json.loads(mp.read_text()).get("val_rmse", float("inf"))
+                m = json.loads(mp.read_text())
+                val = m.get("selection_score", m.get("val_rmse", float("inf")))
                 candidates.append((val, d.name))
     if not candidates:
-        raise FileNotFoundError(f"no aggregator dirs with metrics.json under {task_dir}")
+        raise FileNotFoundError(f"no variant dirs with metrics.json under {task_dir}")
     candidates.sort(key=lambda c: (c[0], c[1]))
     return candidates[0][1]
 
@@ -123,17 +124,14 @@ def _default_filename(ctx: RunContext, resolved) -> str:
 
 
 class _ExportGraph(nn.Module):
-    """Traceable graph: (B,V,H,W,3) → preprocess → backbone → per-head → (B,) or (B,N)."""
+    """Traceable graph: (B,V,H,W,3) → preprocess → backbone (per view) → per-head
+    `mil_pool` → concat → (B,) or (B,N). Every head consumes all V views."""
 
-    def __init__(self, backbone, resolved, union, backbone_name):
+    def __init__(self, backbone, resolved, backbone_name):
         super().__init__()
         self.backbone = backbone
         self.heads = nn.ModuleList([head for _, _, _, head in resolved])
-        self.aggs = [agg for _, agg, _, _ in resolved]
         self.backbone_name = backbone_name
-        for i, (_, agg, _, _) in enumerate(resolved):
-            idx = [union.index(v) for v in aggregators.VIEW_TYPES[agg]]
-            self.register_buffer(f"idx_{i}", torch.tensor(idx, dtype=torch.long))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x.float()
@@ -143,15 +141,7 @@ class _ExportGraph(nn.Module):
         x = backbones.preprocess(x, self.backbone_name)  # same op as eval_transform
         feats = self.backbone(x).reshape(b, v, -1)  # (B, V, D)
 
-        outs = []
-        for i, head in enumerate(self.heads):
-            idx = getattr(self, f"idx_{i}")
-            f = feats.index_select(1, idx)  # (B, V_h, D)
-            if self.aggs[i] == "top_only":
-                outs.append(head(f.squeeze(1)))  # (B, 1)
-            else:
-                outs.append(mil_pool(head, f))  # (B, 1)
-
+        outs = [mil_pool(head, feats) for head in self.heads]  # each (B, 1)
         out = torch.cat(outs, dim=1)  # (B, N)
         if out.shape[1] == 1:
             out = out.squeeze(1)  # (B,)

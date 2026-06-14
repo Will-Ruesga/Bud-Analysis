@@ -40,11 +40,11 @@ The library lives in its own project directory. Tasks live in **sibling** projec
 | [`backbones.py`](docs/core/backbones.md) | Frozen DINOv3 wrapper, `eval_transform`, `feature_dim` |
 | [`data.py`](docs/core/data.md) | Discovery, prep orchestrator, `index.csv` reader/writer, batching iterator |
 | [`embeddings.py`](docs/core/embeddings.md) | One-time DINOv3 forward pass, `.npy` cache (idempotent) |
-| [`aggregators.py`](docs/core/aggregators.md) | View selection: `top_only` (top view) + `mil_mean` (5 views stacked, MIL late-fusion) |
+| [`aggregators.py`](docs/core/aggregators.md) | View stacking: all 5 views stacked `(N, V, D)` for MIL late-fusion (`heads.mil_pool`) |
 | [`heads.py`](docs/core/heads.md) | `Regressor` MLP + `build(spec)` factory |
-| [`optimization.py`](docs/core/optimization.md) | Optuna helpers: optimiser build, keep-best-per-aggregator, study summary |
+| [`optimization.py`](docs/core/optimization.md) | Optuna helpers: optimiser build, keep-best-per-variant, study summary |
 | [`export.py`](docs/core/export.md) | Unified ONNX export — N heads share one backbone, filesystem-based head resolution |
-| [`plotting.py`](docs/core/plotting.md) | Per-task aggregator comparison + prep dataset-distribution figure |
+| [`plotting.py`](docs/core/plotting.md) | Per-task variant (loss) comparison + prep dataset-distribution figure |
 
 ### `docs/task-template/` — per-task template
 
@@ -54,7 +54,7 @@ Three command scripts + one config module per task project. When you create a ne
 |---|---|
 | [`config.py`](docs/task-template/config.md) | All task settings (module constants — `DATE`, `CULTIVAR`, `HEAD_SPEC`, `HPARAMS`, `OPT_SEARCH_SPACE`, …) |
 | [`prepare.py`](docs/task-template/prepare.md) | Configure a run → write `index.csv` + the run manifest (`info.json`) + `distribution.png` |
-| [`train.py`](docs/task-template/train.md) | Optuna study + training loop + per-aggregator report |
+| [`train.py`](docs/task-template/train.md) | Optuna study + training loop + per-variant (loss) report |
 | [`export.py`](docs/task-template/export.md) | One-line wrapper → `core.export.export(ctx, heads)` |
 
 ## Workflow
@@ -67,14 +67,14 @@ every later stage just takes `-run <run>` and reads that manifest — no `config
 python prepare.py --data_dir /path/to/dataset            # -dir for short; --backbone/-bkb to choose
 #    also writes prep/distribution.png — the dataset overview figure
 
-# 2. main: Optuna study, keeps best trial per aggregator
+# 2. main: Optuna study, keeps best trial per variant (the compared loss: mse vs huber)
 python train.py   -run output/<run>                      # --lr/--epochs/--seed override the manifest
 python train.py   -run output/<run> --epochs 50          #   …same prepared data, different hparams
 
-# 3. once trained: bundle into ONNX (deliberate aggregator choice)
-python export.py  -run output/<run>                      # this task, auto-pick best aggregator
-python export.py  -run output/<run> --aggregator mil_mean
-python export.py  -run output/<run> --heads ripeness:auto defects:mil_mean   # multi-task bundle
+# 3. once trained: bundle into ONNX (deliberate variant choice)
+python export.py  -run output/<run>                      # this task, auto-pick best variant
+python export.py  -run output/<run> --variant huber
+python export.py  -run output/<run> --heads ripeness:auto defects:huber      # multi-task bundle
 python export.py  -run output/<run> --heads all                             # every task, auto each
 ```
 
@@ -94,20 +94,20 @@ output/YYYY_MM_DD-cultivar-<backbone_name>/
 ├── onnx/                     # deployable bundled models
 ├── ripeness-results/         # one folder per task (<task>-results)
 │   ├── study_summary.json
-│   ├── comparison.png        # aggregator comparison (curves + pred-vs-true scatters)
-│   ├── mil_mean/             # best Optuna trial for this aggregator
+│   ├── comparison.png        # variant comparison (curves + pred-vs-true scatters)
+│   ├── mse/                  # best Optuna trial for this loss variant
 │   │   ├── head.pt
 │   │   ├── metrics.json      # carries head_spec — the dir is self-describing
 │   │   └── predictions.csv
-│   └── top_only/             # (same shape, different aggregator)
+│   └── huber/                # (same shape, different loss)
 └── defects-results/          # next task, same shape
 ```
 
 The `output/` base above is the default; a task sets `OUTPUT_DIR` in its `config.py` to put run dirs anywhere (e.g. a sibling of the task and core checkouts rather than inside the task). See [`run_context.py`](docs/core/run_context.md).
 
-The filesystem under `<task>/` is the source of truth for which heads exist — no separate manifest file. `core.export` walks `<task>/<aggregator>/` to discover trained heads.
+The filesystem under `<task>/` is the source of truth for which heads exist — no separate manifest file. `core.export` walks `<task>/<variant>/` to discover trained heads.
 
-`_study/` scratch dirs appear under `<task>/` during a training run; `optimization.keep_best_per_aggregator` cleans them up afterwards.
+`_study/` scratch dirs appear under `<task>/` during a training run; `optimization.keep_best_per_variant` cleans them up afterwards.
 
 Image bytes are **not** duplicated into the run dir. `prep/index.csv`'s `fileName` is relative to `DATA_DIR` (recorded absolute in `prep/info.json`). The only image-derived artifact in the run dir is the embedding cache (`emb/<imageID>.npy`).
 
@@ -116,9 +116,7 @@ Plus, in the **raw dataset folder** (the path passed as `DATA_DIR`):
 ```
 <DATA_DIR>/
 ├── 0/ 1/ 2/ ...                                # original class folders (untouched)
-├── predictions_ripeness_mil_mean.csv           # tool-friendly: <class>\<image>.png paths
-├── predictions_ripeness_top_only.csv
-├── predictions_defects_mil_mean.csv
+├── predictions.csv                             # tool-friendly: <class>\<image>.png paths, one predMse/predHuber col per variant
 └── ...
 ```
 
@@ -145,10 +143,10 @@ These are locked. Don't relitigate without a strong reason.
 
 - **Regression only.** No classifier or ordinal heads anywhere. See "Why regression-only" at the top.
 - **Frozen backbone.** DINOv3 is loaded from `core/dinov3/` (vendored), runs once per image, features are cached as `.npy`. Only the MLP head trains.
-- **Two aggregators** (`top_only`, `mil_mean`). `top_only` feeds the single top view to the head; `mil_mean` is MIL late-fusion — all 5 views run through the head and their *predictions* are averaged (`heads.mil_pool`), never feature-pooled. Feature-level bag pooling (the old `all_views_max`/`all_views_mean`) was removed because one view could dominate the pooled vector — the source of per-flower instability; see [`docs/core/aggregators.md`](docs/core/aggregators.md). Aggregator choice is part of the Optuna search space.
-- **One Optuna study per task per run dir; one kept winner per aggregator.** No `OPT_TOP_K`, no `rank_<i>` dirs. `<task>/<aggregator>/` is the kept-winner directory.
-- **Filesystem is the registry.** Each `<task>/<aggregator>/` is self-describing (carries `head_spec` in its `metrics.json`). No `manifest.json`.
-- **Unified `export()` function** — N heads share one backbone in a single ONNX. Input always `(B, V, H, W, 3)`. Output `(B,)` for one head, `(B, N)` for many. Aggregator selection is a deliberate human-in-the-loop decision; `auto` picks the lowest-`val_rmse` aggregator per task.
+- **One view pipeline** (`mil_mean`). All 5 views run through the head and their *predictions* are averaged (`heads.mil_pool`, MIL late-fusion) — never feature-pooled, so no single view can dominate a pooled vector. A view-consistency penalty (`+ λ·variance` across views, λ searched) trains the head toward angle-invariance.
+- **The study compares the loss** (`mse` vs `huber`); one kept winner per loss. Embedding pooling is always CLS (the masked-mean experiment lost and was removed). No `OPT_TOP_K`, no `rank_<i>` dirs. `<task>/<variant>/` is the kept-winner directory.
+- **Filesystem is the registry.** Each `<task>/<variant>/` is self-describing (carries `head_spec` in its `metrics.json`). No `manifest.json`.
+- **Unified `export()` function** — N heads share one backbone in a single ONNX. Input always `(B, V, H, W, 3)`. Output `(B,)` for one head, `(B, N)` for many. Variant selection is a deliberate human-in-the-loop decision; `auto` picks the lowest-`selection_score` variant per task.
 - **One backbone per run dir; backbone name is in the run dir name.** Different backbones produce sibling run dirs (`<date>-<cultivar>-<backbone_A>/`, `<date>-<cultivar>-<backbone_B>/`) — no collisions, no manual date-bumping.
 - **No image duplication.** `prepare.py` writes only `index.csv`, `info.json`, and `distribution.png`. Image bytes stay in `DATA_DIR`; embeddings (`emb/<imageID>.npy`) are the only image-derived cache. Whatever format PIL can open is fair game in `DATA_DIR`.
 - **Predictions CSVs land in `DATA_DIR`** (the raw dataset folder). Everything else lives under `output/<run>/`.
@@ -157,7 +155,7 @@ These are locked. Don't relitigate without a strong reason.
 
 One training plot, per task.
 
-- **`<task>-results/comparison.png`** — per-task aggregator comparison. Top row: val-RMSE and train/val loss curves overlaid, one line per aggregator. Bottom row: one predicted-vs-true scatter per aggregator, each over a grey ±0.1 tolerance band. (Predictions also land in one `DATA_DIR/predictions.csv` with a `pred<Aggregator>` column per head.)
+- **`<task>-results/comparison.png`** — per-task variant comparison (the compared loss: mse vs huber). Top row: val-RMSE and train/val loss curves overlaid, one line per variant. Bottom row: one predicted-vs-true scatter per variant over a grey ±0.1 tolerance band, captioned with its robustness numbers (view range / fork σ / λ). (Predictions also land in one `DATA_DIR/predictions.csv` with a `pred<Variant>` column per head.)
 
 ## Getting started
 

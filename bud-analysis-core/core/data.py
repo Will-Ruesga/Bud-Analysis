@@ -95,16 +95,19 @@ def read_index(csv_path: Path) -> pd.DataFrame:
 
 
 def apply_label_corrections(ctx, index: pd.DataFrame) -> pd.DataFrame:
-    """Apply human label corrections (`<run>/<task>_changes.csv`) to an index.
+    """Apply human label corrections (`<data_dir>/<task>_changes.csv`) to an index.
 
-    The viewer's relabel tool writes one row per image with a corrected class.
-    Here each changed flower's `class` and `target` are remapped **on a copy**
-    (the new target is taken from the index's existing class→target mapping),
-    leaving `split` and the cached embeddings untouched — embeddings are
+    Corrections live **with the dataset**, not the run, so every run on that
+    dataset (any backbone / future re-prepare) inherits the same relabels. The
+    viewer's relabel tool writes one row per image with a corrected
+    class. Here each changed flower's `class` and `target` are remapped **on a
+    copy** (the new target is taken from the index's existing class→target
+    mapping), leaving `split` and the cached embeddings untouched — embeddings are
     class-independent, so retraining picks up the corrected labels without
-    re-extracting anything. Returns the input unchanged if no file exists.
+    re-extracting anything, and **no image file is ever modified**. Returns the
+    input unchanged if no file exists.
     """
-    path = ctx.root / f"{ctx.task}_changes.csv"
+    path = ctx.data_dir() / f"{ctx.task}_changes.csv"
     if not path.is_file():
         return index
 
@@ -119,6 +122,11 @@ def apply_label_corrections(ctx, index: pd.DataFrame) -> pd.DataFrame:
 
     target_of = {str(k): float(v) for k, v in index.groupby("class")["target"].first().items()}
     index = index.copy()
+    # Class folders are often numeric ("1".."6"), so the column reads back as
+    # int64; corrected classes are strings. Coerce to str first so the remap is
+    # dtype-safe (pandas >= 3 rejects a str into an int64 column) and class stays
+    # a categorical label, not a number.
+    index["class"] = index["class"].astype(str)
     remapped = 0
     for flower_id, new_class in new_by_flower.items():
         if new_class not in target_of:

@@ -1,12 +1,11 @@
-"""Per-aggregator and per-task plots.
+"""Per-variant and per-task plots.
 
-`report` renders one aggregator's `report.png` and copies its predictions to
-DATA_DIR; `write_comparison` renders the across-aggregator `comparison.png`.
-Both render what the task already produced — no metric recomputation. The
-per-sample `predictions.csv` and `metrics.json` are written by the task into the
-trial scratch dir and moved into place by `optimization.keep_best_per_aggregator`
-(which must read `metrics.json` before `report` ever runs). See
-docs/core/plotting.md.
+`report` validates one variant's history; `write_comparison` renders the
+across-variant `comparison.png` (e.g. mse vs huber). Both render what the task
+already produced — no metric recomputation. The per-sample `predictions.csv` and
+`metrics.json` are written by the task into the trial scratch dir and moved into
+place by `optimization.keep_best_per_variant` (which must read `metrics.json`
+before `report` ever runs). See docs/core/plotting.md.
 """
 
 import json
@@ -26,10 +25,10 @@ _REQUIRED_HISTORY_KEYS = {"epoch", "train_loss", "val_loss", "val_rmse", "val_ma
 
 
 def report(ctx: RunContext, result: TrainResult) -> None:
-    """Validate one aggregator's `history` (Rule 12). No figure, no copy.
+    """Validate one variant's `history` (Rule 12). No figure, no copy.
 
-    The per-aggregator figure lives in `comparison.png`; the DATA_DIR
-    predictions are written once for all aggregators by `write_predictions`.
+    The per-variant figure lives in `comparison.png`; the DATA_DIR predictions
+    are written once for all variants by `write_predictions`.
     """
     for entry in result.metrics["history"]:
         missing = _REQUIRED_HISTORY_KEYS - entry.keys()
@@ -37,26 +36,26 @@ def report(ctx: RunContext, result: TrainResult) -> None:
             raise ValueError(f"history entry missing keys {sorted(missing)}")
 
 
-def _pred_col(aggregator: str) -> str:
-    """Aggregator id → prediction column name: `mil_mean` → `predMilMean`."""
-    return "pred" + "".join(w.capitalize() for w in aggregator.split("_"))
+def _pred_col(variant: str) -> str:
+    """Variant id → prediction column name: `mse` → `predMse`, `huber` → `predHuber`."""
+    return "pred" + "".join(w.capitalize() for w in variant.split("_"))
 
 
-def write_predictions(ctx: RunContext, aggregator_dirs: list[Path] | None = None) -> Path:
-    """Merge the kept aggregators' predictions into one `<DATA_DIR>/predictions.csv`.
+def write_predictions(ctx: RunContext, variant_dirs: list[Path] | None = None) -> Path:
+    """Merge the kept variants' predictions into one `<DATA_DIR>/predictions.csv`.
 
     One row per test `(flower, fork)`; columns `fileName, flowerID, forkID,
-    class, target`, then one `pred<Aggregator>` column per aggregator
-    (`predMilMean`, `predTopOnly`, …). Replaces the old per-aggregator copies and
-    removes any stale `predictions_<task>_*.csv` this pipeline wrote before.
+    class, target`, then one `pred<Variant>` column per compared variant
+    (`predMse`, `predHuber`, …). Replaces the old per-variant copies and removes
+    any stale `predictions_<task>_*.csv` this pipeline wrote before.
     """
-    if aggregator_dirs is None:
-        aggregator_dirs = sorted(
+    if variant_dirs is None:
+        variant_dirs = sorted(
             d for d in ctx.task_dir.iterdir()
             if d.is_dir() and (d / "predictions.csv").exists()
         )
     merged = None
-    for agg_dir in aggregator_dirs:
+    for agg_dir in variant_dirs:
         df = data.read_index(agg_dir / "predictions.csv")
         df["fork_id"] = df["fork_id"].fillna("").astype(str)
         col = _pred_col(agg_dir.name)
@@ -67,7 +66,7 @@ def write_predictions(ctx: RunContext, aggregator_dirs: list[Path] | None = None
             sub = df[["flower_id", "fork_id", "prediction"]].rename(columns={"prediction": col})
             merged = merged.merge(sub, on=["flower_id", "fork_id"], how="outer")
     if merged is None:
-        raise ValueError(f"no aggregator predictions under {ctx.task_dir}")
+        raise ValueError(f"no variant predictions under {ctx.task_dir}")
 
     data_dir = Path(ctx.data_dir())
     for stale in data_dir.glob(f"predictions_{ctx.task}_*.csv"):
@@ -77,9 +76,12 @@ def write_predictions(ctx: RunContext, aggregator_dirs: list[Path] | None = None
     return dest
 
 
-def _pretty_agg(name: str) -> str:
-    """Aggregator id → display name: `mil_mean` → "MIL Mean", `top_only` → "Top Only"."""
-    return " ".join("MIL" if w == "mil" else w.capitalize() for w in name.split("_"))
+_PRETTY_VARIANT = {"mse": "MSE", "huber": "Huber", "mil_mean": "MIL Mean", "top_only": "Top Only"}
+
+
+def _pretty_variant(name: str) -> str:
+    """Variant id → display name: `mse` → "MSE", `huber` → "Huber" (legacy agg names too)."""
+    return _PRETTY_VARIANT.get(name, name.replace("_", " ").title())
 
 
 def _scatter_pred_true(ax, predictions, labels, classes, metrics=None, legend=True):
@@ -113,23 +115,24 @@ def _scatter_pred_true(ax, predictions, labels, classes, metrics=None, legend=Tr
 def write_comparison(
     ctx: RunContext,
     task: str | None = None,
-    aggregator_dirs: list[Path] | None = None,
+    variant_dirs: list[Path] | None = None,
 ) -> Path:
-    """Write `<task>/comparison.png`: val_rmse + loss curves and per-aggregator scatters.
+    """Write `<task>/comparison.png`: val_rmse + loss curves and per-variant scatters.
 
-    Top row: val_rmse and train/val loss curves across aggregators. Bottom row:
-    one predicted-vs-true scatter (with ±0.1 band) per aggregator. Reads each
-    aggregator dir's `metrics.json` (history) and `predictions.csv`. Defaults to
-    every subdir of `ctx.task_dir` holding a `metrics.json`. Returns the path.
+    Top row: val_rmse and train/val loss curves across the compared variants
+    (e.g. mse vs huber). Bottom row: one predicted-vs-true scatter (with ±0.1 band)
+    per variant, captioned with its robustness numbers. Reads each variant dir's
+    `metrics.json` (history) and `predictions.csv`. Defaults to every subdir of
+    `ctx.task_dir` holding a `metrics.json`. Returns the path.
     """
     task = task or ctx.task
-    if aggregator_dirs is None:
-        aggregator_dirs = sorted(
+    if variant_dirs is None:
+        variant_dirs = sorted(
             d for d in ctx.task_dir.iterdir()
             if d.is_dir() and (d / "metrics.json").exists()
         )
 
-    n = len(aggregator_dirs)
+    n = len(variant_dirs)
     ncols = max(n, 2)
     # Wider-than-tall cells: each column ~4.5 wide, each of the 2 rows ~3.2 tall,
     # so the bottom scatter panels read landscape (x longer than y) instead of squished.
@@ -138,20 +141,21 @@ def write_comparison(
     ax_rmse = fig.add_subplot(gs[0, : ncols // 2])
     ax_loss = fig.add_subplot(gs[0, ncols // 2 :])
 
-    for i, agg_dir in enumerate(aggregator_dirs):
+    for i, agg_dir in enumerate(variant_dirs):
         name = agg_dir.name
         metrics = json.loads((agg_dir / "metrics.json").read_text())
         history = metrics["history"]
         epochs = [h["epoch"] for h in history]
         color = f"C{i}"
 
-        pretty = _pretty_agg(name)
+        pretty = _pretty_variant(name)
         ax_rmse.plot(epochs, [h["val_rmse"] for h in history], label=pretty, color=color)
         ax_loss.plot(epochs, [h["train_loss"] for h in history], "--", color=color)
         ax_loss.plot(epochs, [h["val_loss"] for h in history], "-", color=color, label=pretty)
 
         ax_sc = fig.add_subplot(gs[1, i])
-        _render_scatter_panel(ax_sc, agg_dir / "predictions.csv", pretty)
+        _render_scatter_panel(ax_sc, agg_dir / "predictions.csv", pretty,
+                              robustness=_robustness_caption(metrics))
 
     ax_rmse.set(xlabel="epoch", ylabel="val_rmse")
     ax_rmse.set_title("Val RMSE", fontweight="bold")
@@ -168,7 +172,24 @@ def write_comparison(
     return out_path
 
 
-def _render_scatter_panel(ax, predictions_csv, title):
+def _robustness_caption(metrics: dict) -> str | None:
+    """Compact 'view range / fork σ / λ' line for the scatter panel.
+
+    Returns None when the run predates the robustness metrics (old `metrics.json`
+    without these keys), so legacy comparisons render unchanged.
+    """
+    parts = []
+    if metrics.get("view_range") is not None:
+        parts.append(f"view range {metrics['view_range']:.3f}")
+    if metrics.get("fork_std") is not None:
+        parts.append(f"fork σ {metrics['fork_std']:.3f}")
+    lam = metrics.get("lambda_consistency")
+    if lam:
+        parts.append(f"λ {lam:.3g}")
+    return "  ·  ".join(parts) if parts else None
+
+
+def _render_scatter_panel(ax, predictions_csv, title, robustness=None):
     """One aggregator's predicted-vs-true scatter (with ±0.1 band) from its CSV."""
     df = data.read_index(predictions_csv)
     _scatter_pred_true(
@@ -179,6 +200,10 @@ def _render_scatter_panel(ax, predictions_csv, title):
         legend=False,
     )
     ax.set_title(title, fontweight="bold")
+    if robustness:
+        ax.text(0.02, 0.98, robustness, transform=ax.transAxes, fontsize=7,
+                va="top", ha="left",
+                bbox=dict(boxstyle="round", fc="white", ec="0.7", alpha=0.85))
 
 
 _SPLITS = ["train", "val", "test"]

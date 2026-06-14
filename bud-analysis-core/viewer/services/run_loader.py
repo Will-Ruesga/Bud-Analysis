@@ -144,45 +144,54 @@ def resolve_image(run: str, rel_file: str) -> Path | None:
 
 
 # ---- label corrections (relabel tool) -------------------------------------
-# Human-corrected class labels for a run live in output/<run>/ripeness_changes.csv,
-# one row per view (image), consumed later by prepare to remap class -> target.
+# Human-corrected class labels live WITH THE DATASET, at
+# <data_dir>/<task>_changes.csv, one row per view (image). Keeping them beside
+# the dataset (not the run) makes corrections the dataset's source of truth, so
+# every run on it — any backbone / future re-prepare — inherits the
+# same relabels. The dataset images are never modified; only this sidecar CSV is
+# read by `core.data.apply_label_corrections` to remap class -> target at train.
 _CHANGES_FIELDS = ["fileName", "flowerID", "fork", "oldClass", "newClass"]
 
 
 def changes_path(run: str) -> Path:
-    """Path to a run's label-corrections CSV (`<task>_changes.csv`, may not exist)."""
+    """Path to the dataset's label-corrections CSV (`<task>_changes.csv`, may not exist)."""
     ctx = RunContext.from_info_json(str(OUTPUT_DIR / run))
-    return ctx.root / f"{ctx.task}_changes.csv"
+    return ctx.data_dir() / f"{ctx.task}_changes.csv"
 
 
-def load_changes(run: str) -> dict[str, str]:
-    """Return `{flower_id: new_class}` from a saved corrections CSV (empty if none)."""
-    path = changes_path(run)
+def _read_changes_rows(path: Path) -> list[dict]:
+    """All rows of a corrections CSV as dicts (empty list if the file is absent)."""
     if not path.is_file():
-        return {}
-    out: dict[str, str] = {}
+        return []
     with open(path, newline="") as f:
         if not f.readline().lower().startswith("sep="):
             f.seek(0)
-        for row in csv.DictReader(f, delimiter=";"):
-            out[row["flowerID"]] = row["newClass"]
-    return out
+        return list(csv.DictReader(f, delimiter=";"))
+
+
+def load_changes(run: str) -> dict[str, str]:
+    """Return `{flower_id: new_class}` from the dataset's corrections CSV (empty if none)."""
+    return {row["flowerID"]: row["newClass"] for row in _read_changes_rows(changes_path(run))}
 
 
 def save_changes(run: str, changes: list[dict]) -> dict:
-    """Write per-image corrections for `changes` (a list of `{flower_id, new_class}`).
+    """Merge per-image corrections for `changes` (a list of `{flower_id, new_class}`)
+    into the dataset's `<task>_changes.csv`.
 
     Each changed flower is expanded to one row per image via the run's index, so
-    the CSV points at concrete files with their old and new class.
+    the CSV points at concrete files with their old and new class. Existing rows
+    for flowers **not** in this request are preserved (corrections accumulate
+    across runs on the same dataset); rows for flowers that **are** in this
+    request are replaced with the current ones. No image file is touched.
     """
     new_by_flower = {str(c["flower_id"]): str(c["new_class"]) for c in changes}
     ctx = RunContext.from_info_json(str(OUTPUT_DIR / run))
     df = data.read_index(ctx.index_csv)
-    rows = []
+    new_rows = []
     for r in df.to_dict("records"):
         fid = _s(r["flower_id"])
         if fid in new_by_flower:
-            rows.append({
+            new_rows.append({
                 "fileName": _s(r["file_name"]).replace("/", "\\"),
                 "flowerID": fid,
                 "fork": fid.rsplit("_", 1)[-1],
@@ -190,6 +199,9 @@ def save_changes(run: str, changes: list[dict]) -> dict:
                 "newClass": new_by_flower[fid],
             })
     path = changes_path(run)
+    # Keep existing rows for flowers untouched by this request; replace the rest.
+    kept = [row for row in _read_changes_rows(path) if row["flowerID"] not in new_by_flower]
+    rows = kept + new_rows
     with open(path, "w", newline="") as f:
         f.write("sep=;\n")
         writer = csv.DictWriter(f, fieldnames=_CHANGES_FIELDS, delimiter=";")

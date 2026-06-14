@@ -26,7 +26,6 @@ __pycache__/
 *.pyc
 
 # Misc
-bud-analysis-core/MODEL_ROBUSTNESS_GOAL.md
 ripeness/ideas.txt
 
 

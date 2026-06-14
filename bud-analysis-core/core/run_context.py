@@ -103,9 +103,13 @@ class RunContext:
 
     # --- helpers ---
 
-    def aggregator_dir(self, aggregator_name: str) -> Path:
-        """One aggregator's kept-winner dir under the current task."""
-        return self.task_dir / aggregator_name
+    def variant_dir(self, variant: str) -> Path:
+        """One compared variant's kept-winner dir under the current task.
+
+        `variant` is the value of the study's compared dimension (e.g. the loss
+        name `mse`/`huber`), so the dir is `<task>-results/<variant>/`.
+        """
+        return self.task_dir / variant
 
     def embedding_path(self, image_id: str) -> Path:
         return self.embeddings_dir / f"{image_id}.npy"

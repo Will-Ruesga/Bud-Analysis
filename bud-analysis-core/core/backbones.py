@@ -23,13 +23,13 @@ from torch.nn import functional as F
 _VARIANTS: dict[str, dict] = {
     "dinov3_vits16": {
         "feature_dim": 384,
-        "image_size": 224,
+        "image_size": 512,
         "mean": (0.485, 0.456, 0.406),
         "std": (0.229, 0.224, 0.225),
     },
     "dinov3_vitb16": {
         "feature_dim": 768,
-        "image_size": 224,
+        "image_size": 512,
         "mean": (0.485, 0.456, 0.406),
         "std": (0.229, 0.224, 0.225),
     },
@@ -39,28 +39,6 @@ _VARIANTS: dict[str, dict] = {
 def feature_dim(backbone_name: str) -> int:
     """Embedding dim for a given variant. Raises KeyError on unknown names."""
     return _VARIANTS[backbone_name]["feature_dim"]
-
-
-def patch_grid(backbone_name: str) -> int:
-    """Patches per side at the eval resolution (`image_size / 16`); 224 → 14.
-
-    These are `*16` variants, so the patch size is 16. Used to align an image
-    mask with the `(B, N, D)` patch tokens for mask-pooled embeddings.
-    """
-    return _VARIANTS[backbone_name]["image_size"] // 16
-
-
-def feature_tokens(model: nn.Module, x: torch.Tensor) -> torch.Tensor:
-    """Final-layer patch tokens `(B, N, D)` from a wrapped DINOv3.
-
-    N = `patch_grid(name)**2` spatial tokens (CLS and storage/register tokens
-    excluded). `model(x)` still returns the CLS token; this is the alternative
-    used for mask-pooled embeddings.
-    """
-    raw = getattr(model, "model", model)
-    out = raw.forward_features(x)
-    out = out[0] if isinstance(out, (list, tuple)) else out
-    return out["x_norm_patchtokens"]
 
 
 def preprocess(images: torch.Tensor, backbone_name: str) -> torch.Tensor:

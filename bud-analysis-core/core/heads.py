@@ -45,12 +45,18 @@ def build(spec: HeadSpec, backbone_name: str) -> nn.Module:
     return Regressor(input_dim, spec.hidden_dims, spec.dropout)
 
 
-def mil_pool(head: nn.Module, x: torch.Tensor) -> torch.Tensor:
+def mil_pool(head: nn.Module, x: torch.Tensor, return_views: bool = False):
     """MIL forward: per-view head, then mean over views. `(B, V, D) -> (B, 1)`.
 
     The single MIL implementation, called by the `mil_mean` training path and
     by `export`, so train-time and inference-time pooling are the same op.
+
+    With `return_views=True` also returns the per-view predictions `(B, V, 1)`
+    *before* the mean — the view-consistency loss and the view-spread metrics
+    read these. The default (pooled-only) keeps the export/inference path and the
+    ONNX trace branch-free and unchanged.
     """
     b, v, d = x.shape
-    per_view = head(x.reshape(b * v, d))  # (B*V, 1)
-    return per_view.reshape(b, v, -1).mean(dim=1)  # (B, 1)
+    per_view = head(x.reshape(b * v, d)).reshape(b, v, -1)  # (B, V, 1)
+    pooled = per_view.mean(dim=1)  # (B, 1)
+    return (pooled, per_view) if return_views else pooled

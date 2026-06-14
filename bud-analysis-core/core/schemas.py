@@ -16,9 +16,10 @@ import numpy as np
 class HeadSpec:
     """Description of one regression head.
 
-    `aggregator_name` also implicitly determines which view types feed the
-    head — see `aggregators.VIEW_TYPES[aggregator_name]`. Input dim is
-    derived from the backbone at build time, not stored here.
+    `aggregator_name` is always `"mil_mean"` — the one view pipeline (all views,
+    late fusion via `heads.mil_pool`). The field is kept so on-disk `metrics.json`
+    stays self-describing for ONNX export. Input dim is derived from the backbone
+    at build time, not stored here.
     """
 
     aggregator_name: str
