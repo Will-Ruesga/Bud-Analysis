@@ -58,7 +58,8 @@ HPARAMS = {
 #                         rides on top of either).
 #   lambda_consistency  — weight of the per-fork view-variance penalty added to the
 #                         training loss; [lo, hi] is searched. Teaches the head to
-#                         give the same ripeness across views. [0, 0] disables it.
+#                         give the same ripeness across views. Disabled per-run via
+#                         `train.py --consistency-loss off` (pins λ to 0).
 OPT_N_TRIALS = 100
 OPT_SEARCH_SPACE = {
     "loss": ["mse", "huber"],

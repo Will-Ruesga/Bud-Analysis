@@ -102,7 +102,8 @@ def _objective(trial, ctx, index, emb, settings, scratch):
     # The compared dimension is the loss; the view pipeline is fixed (mil_mean).
     loss_name = trial.suggest_categorical("loss", settings.OPT_SEARCH_SPACE["loss"])
     spec = settings.HEAD_SPEC
-    lam = _suggest_lambda(trial, settings.OPT_SEARCH_SPACE)
+    # "old way" mode: λ pinned to 0, the consistency term is a no-op and isn't searched.
+    lam = _suggest_lambda(trial, settings.OPT_SEARCH_SPACE) if getattr(settings, "CONSISTENCY_LOSS", True) else 0.0
     beta = settings.HPARAMS.get("robustness_beta", 0.0)
 
     samples, keys = aggregators.stack_views(index, emb)
@@ -166,6 +167,7 @@ def _objective(trial, ctx, index, emb, settings, scratch):
         "val_view_range": val_view_range,
         "selection_score": selection_score,
         "loss": loss_name,
+        "compare_axis": "loss",   # the dimension the study keeps one winner per (viewer reads this)
         "lambda_consistency": lam,
         "robustness_beta": beta,
         "history": history,
@@ -216,21 +218,24 @@ def _load_result(agg_dir):
     )
 
 
-def main(run_dir, overrides=None):
+def main(run_dir, overrides=None, consistency_loss=None):
     """Run the full sweep for a prepared run: extract → study → keep best → report → comparison.
 
     Everything is read from `<run>/prep/info.json` (data, backbone, frozen
     training config). `overrides` is a partial hparams dict (from the CLI
-    flags) layered on top of the manifest's `hparams`.
+    flags) layered on top of the manifest's `hparams`. `consistency_loss` toggles
+    the view-consistency penalty (TEMP CLI flag); None defaults to on.
     """
     ctx = RunContext.from_info_json(run_dir)
     info = ctx.info()
     hparams = {**info["hparams"], **(overrides or {})}
     hs = info["head_spec"]
+    consistency = True if consistency_loss is None else consistency_loss
     settings = SimpleNamespace(
         OPT_SEARCH_SPACE=info["opt_search_space"],
         HEAD_SPEC=HeadSpec(hs["aggregator_name"], tuple(hs["hidden_dims"]), hs["dropout"]),
         HPARAMS=hparams,
+        CONSISTENCY_LOSS=consistency,
     )
 
     emb = embeddings.extract(ctx)
@@ -285,6 +290,11 @@ if __name__ == "__main__":
     ap.add_argument("--lr", type=float)
     ap.add_argument("--epochs", type=int)
     ap.add_argument("--seed", type=int)
+    # TEMP: override the manifest's view-consistency switch per run, so a script can
+    # train old (off) vs new (on) loss without editing config.py between runs.
+    ap.add_argument("--consistency-loss", choices=["on", "off"], default=None,
+                    help="TEMP: 'off' = old loss (λ=0), 'on' = new loss; omit to use the manifest")
     a = ap.parse_args()
     overrides = {k: getattr(a, k) for k in ("lr", "epochs", "seed") if getattr(a, k) is not None}
-    main(a.run, overrides)
+    consistency = None if a.consistency_loss is None else (a.consistency_loss == "on")
+    main(a.run, overrides, consistency_loss=consistency)

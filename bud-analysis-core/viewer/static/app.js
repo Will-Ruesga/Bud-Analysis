@@ -27,7 +27,12 @@ const PALETTE = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
 const classColor = (klass) => PALETTE[Math.max(0, DATA.classes.indexOf(klass)) % PALETTE.length];
 
 const prettyView = (v) => v.split("_").map((w) => w[0].toUpperCase() + w.slice(1)).join(" ");
-const prettyAgg = (n) => n.split("_").map((w) => (w === "mil" ? "MIL" : w[0].toUpperCase() + w.slice(1))).join(" ");
+// Variant names are the compared-axis values: aggregators (mil_mean) or losses (mse, huber).
+const ACRONYMS = { mil: "MIL", mse: "MSE", mae: "MAE", rmse: "RMSE" };
+const prettyAgg = (n) => n.split("_").map((w) => ACRONYMS[w] || (w[0].toUpperCase() + w.slice(1))).join(" ");
+// Label for the variant selector — names whatever the run compared.
+const AXIS_LABELS = { loss: "Loss", aggregator: "Head", consistency: "Consistency" };
+const prettyAxis = (a) => AXIS_LABELS[a] || (a ? a[0].toUpperCase() + a.slice(1) : "Variant");
 
 // ---- flower identity / effective (corrected) class ----
 const forkOf = (fid) => fid.slice(fid.lastIndexOf("_") + 1);
@@ -63,6 +68,7 @@ async function init() {
     const o = document.createElement("option");
     o.value = run.name; o.textContent = run.name;
     o.dataset.aggregators = JSON.stringify(run.aggregators);
+    o.dataset.axis = run.axis || "aggregator";
     runSel.appendChild(o);
   });
   if (!runs.length) { $("status").textContent = "No trained runs found under output/."; return; }
@@ -88,6 +94,7 @@ async function init() {
 function onRunChange() {
   const opt = $("run").selectedOptions[0];
   const aggs = JSON.parse(opt.dataset.aggregators || "[]");
+  $("aggregator-label").textContent = prettyAxis(opt.dataset.axis);
   const aggSel = $("aggregator");
   aggSel.innerHTML = "";
   aggs.forEach((a) => {

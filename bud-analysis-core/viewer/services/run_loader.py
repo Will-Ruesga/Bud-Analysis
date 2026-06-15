@@ -51,20 +51,43 @@ def list_runs() -> list[dict]:
         try:
             ctx = RunContext.from_info_json(str(run_dir))
             aggs = _aggregators(ctx)
+            axis = _compare_axis(ctx, aggs)
         except Exception:
             continue
-        runs.append({"name": run_dir.name, "task": ctx.task, "aggregators": aggs})
+        runs.append({"name": run_dir.name, "task": ctx.task, "aggregators": aggs, "axis": axis})
     return runs
 
 
 def _aggregators(ctx: RunContext) -> list[str]:
-    """Trained aggregator dirs (have head.pt + metrics.json) under the task."""
+    """Trained variant dirs (have head.pt + metrics.json) under the task.
+
+    The dir names are the values of whatever axis the study compared — loss
+    (`mse`/`huber`) on current runs, aggregator (`mil_mean`/`top_only`) on legacy
+    ones. See `_compare_axis` for the label.
+    """
     if ctx.task is None or not ctx.task_dir.exists():
         return []
     return sorted(
         d.name for d in ctx.task_dir.iterdir()
         if d.is_dir() and (d / "head.pt").exists() and (d / "metrics.json").exists()
     )
+
+
+def _compare_axis(ctx: RunContext, variants: list[str]) -> str:
+    """The dimension the study compared — what the viewer's variant filter is named.
+
+    Read from any kept variant's `metrics.json` (`compare_axis`). Falls back for
+    legacy runs that predate the key: `loss` if the metrics carry a loss name,
+    else `aggregator` (the original compared dimension).
+    """
+    for name in variants:
+        m = ctx.task_dir / name / "metrics.json"
+        try:
+            data = json.loads(m.read_text())
+        except Exception:
+            continue
+        return data.get("compare_axis") or ("loss" if "loss" in data else "aggregator")
+    return "aggregator"
 
 
 @functools.lru_cache(maxsize=8)
