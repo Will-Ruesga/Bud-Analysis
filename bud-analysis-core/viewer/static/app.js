@@ -124,6 +124,7 @@ async function loadData() {
   SLOT_KEY = null;
   FORK_INC.clear(); FORK_EXC.clear(); renderForkTags(); hideForkDrop();
   buildViewPills(DATA.views);
+  buildRoundPills(DATA.rounds);
   $("details").innerHTML = "<p class='hint'>Click a point to inspect a flower. Then relabel it: drag it onto another class band, press 1–6, or use the class buttons.</p>";
   render();
 }
@@ -198,6 +199,28 @@ function onViewClick(v, btn) {
 }
 const checkedViews = () => new Set([...$("views").querySelectorAll(".toggle.is-on")].map((b) => b.dataset.view));
 
+// ---- round toggle pills (mirror the view pills) ----
+function buildRoundPills(rounds) {
+  const box = $("rounds");
+  box.innerHTML = "";
+  rounds.forEach((r) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "toggle is-on"; b.dataset.round = String(r);
+    b.textContent = "R" + r;
+    b.onclick = () => onRoundClick(String(r), b);
+    box.appendChild(b);
+  });
+}
+function onRoundClick(r, btn) {
+  const a = cyclePhase("rounds", r);
+  const pills = [...$("rounds").querySelectorAll(".toggle")];
+  if (a === "toggle") btn.classList.toggle("is-on");
+  else if (a === "only") pills.forEach((p) => p.classList.toggle("is-on", p.dataset.round === r));
+  else pills.forEach((p) => p.classList.add("is-on"));
+  render(); refreshDetail();
+}
+const checkedRounds = () => new Set([...$("rounds").querySelectorAll(".toggle.is-on")].map((b) => b.dataset.round));
+
 // ---- fork autocomplete dropdown ----
 function showForkDrop() {
   if (!DATA) return;
@@ -264,11 +287,12 @@ const tol = () => {
 function currentPoints() {
   const split = $("split").value;
   const views = checkedViews();
+  const rounds = checkedRounds();
   const meanViews = $("agg-views").checked, meanForks = $("agg-forks").checked;
   const t = tol();
 
   const recs = DATA.records.filter(
-    (r) => (split === "all" || r.split === split) && views.has(r.view_type) && forkAllowed(parseInt(r.fork))
+    (r) => (split === "all" || r.split === split) && views.has(r.view_type) && rounds.has(r.round) && forkAllowed(parseInt(r.fork))
   );
 
   const groups = new Map();

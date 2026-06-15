@@ -71,7 +71,7 @@ def _aggregators(ctx: RunContext) -> list[str]:
 def load_records(run: str, aggregator: str) -> dict:
     """Per-image records for one run + aggregator head (cached in-process).
 
-    Returns {task, aggregator, data_dir, classes, views, forks, records}, where
+    Returns {task, aggregator, data_dir, classes, views, forks, rounds, records}, where
     each record carries flower/fork/view identity, the true target, the head's
     per-view prediction, split, and the image's relative file name.
     """
@@ -126,6 +126,7 @@ def load_records(run: str, aggregator: str) -> dict:
         "views": sorted({rec["view_type"] for rec in records},
                         key=lambda v: next(r["view_id"] for r in records if r["view_type"] == v)),
         "forks": sorted({int(rec["fork"]) for rec in records}),
+        "rounds": sorted({int(rec["round"]) for rec in records}),
         "records": records,
     }
 
