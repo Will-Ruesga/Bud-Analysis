@@ -2,8 +2,7 @@
 
 Runs every row of `index.csv` through the frozen backbone once and caches the
 per-image CLS feature. Idempotent: rows whose `.npy` already exists are skipped,
-and the backbone is never loaded when nothing is missing. See
-docs/core/embeddings.md.
+and the backbone is never loaded when nothing is missing.
 """
 
 import json
@@ -62,7 +61,7 @@ def extract(
             device = "cuda" if torch.cuda.is_available() else "cpu"
 
         model = backbones.load_dinov3(ctx.backbone_name, ctx.backbone_checkpoint, device)
-        transform = backbones.eval_transform(ctx.backbone_name)
+        transform = backbones.eval_transform(ctx.backbone_name, ctx.image_size)
         data_root = Path(ctx.data_dir())
 
         with tqdm(total=len(missing), desc="extracting embeddings (cls)", unit="img") as bar:

@@ -1,8 +1,7 @@
 """Core ↔ task contract.
 
 `HeadSpec` and `TrainResult` are the only types that cross the boundary
-between this package and a task repo. See docs/core/schemas.md for the
-spec.
+between this package and a task repo.
 """
 
 from dataclasses import dataclass

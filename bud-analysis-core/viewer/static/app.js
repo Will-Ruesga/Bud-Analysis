@@ -14,6 +14,7 @@ const FORK_X = new Map();   // flower_id -> fixed x slot (a flower is always one
 const CHANGES = new Map();  // flower_id -> new_class (label corrections, in-memory)
 const FORK_INC = new Set(); // included fork numbers (empty => all)
 const FORK_EXC = new Set(); // excluded fork numbers
+const CULT_INC = new Set(); // included cultivar names (empty => all)
 const HIDDEN = new Set();   // classes toggled off via the legend
 let DRAGGING = null;        // flower_id being dragged to a new class
 let DRAG_TARGET = null;     // class band under the cursor while dragging
@@ -27,17 +28,28 @@ const PALETTE = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
 const classColor = (klass) => PALETTE[Math.max(0, DATA.classes.indexOf(klass)) % PALETTE.length];
 
 const prettyView = (v) => v.split("_").map((w) => w[0].toUpperCase() + w.slice(1)).join(" ");
-// Variant names are the compared-axis values: aggregators (mil_mean) or losses (mse, huber).
+// Variant names are the compared values: a single dim (mse, huber) or a composite
+// of several joined by "-" (mse-off, huber-on).
 const ACRONYMS = { mil: "MIL", mse: "MSE", mae: "MAE", rmse: "RMSE" };
-const prettyAgg = (n) => n.split("_").map((w) => ACRONYMS[w] || (w[0].toUpperCase() + w.slice(1))).join(" ");
-// Label for the variant selector — names whatever the run compared.
-const AXIS_LABELS = { loss: "Loss", aggregator: "Head", consistency: "Consistency" };
-const prettyAxis = (a) => AXIS_LABELS[a] || (a ? a[0].toUpperCase() + a.slice(1) : "Variant");
+const prettyWord = (w) => ACRONYMS[w] || (w[0].toUpperCase() + w.slice(1));
+const prettyVariant = (n) =>
+  n.split("-").map((part) => part.split("_").map(prettyWord).join(" ")).join(" · ");
+// Label for the variant selector — names whatever dims the run compared.
+const AXIS_LABELS = { loss: "Loss", aggregator: "Head", consistency: "Consistency", none: "Variant" };
+const prettyAxis = (a) =>
+  (a || "")
+    .split(",")
+    .map((d) => AXIS_LABELS[d] || (d ? d[0].toUpperCase() + d.slice(1) : "Variant"))
+    .join(" / ") || "Variant";
 
 // ---- flower identity / effective (corrected) class ----
 const forkOf = (fid) => fid.slice(fid.lastIndexOf("_") + 1);
 const origClass = (fid) => FLOWER_CLASS.get(fid);
 const effClass = (fid) => CHANGES.get(fid) ?? FLOWER_CLASS.get(fid);
+// One name for the round-to-round metric everywhere (cell, axis, hover) so it never drifts.
+const ROUND_STD = "round std";
+// Hover label for a fork, in the same "fork <n> · class <k>" style as the scatter.
+const forkLabel = (flower, klass) => `fork ${forkOf(flower)} · class ${klass}`;
 const trueOfClass = (k) => TRUE_OF.get(k);
 
 // ---- small math ----
@@ -48,15 +60,6 @@ function std(a) {
   return Math.sqrt(a.reduce((s, x) => s + (x - m) * (x - m), 0) / (a.length - 1));
 }
 const rms = (a) => Math.sqrt(a.reduce((s, x) => s + x * x, 0) / a.length);
-function pearson(x, y) {
-  const n = x.length;
-  if (n < 2) return null;
-  const mx = mean(x), my = mean(y);
-  let sxy = 0, sxx = 0, syy = 0;
-  for (let i = 0; i < n; i++) { const dx = x[i] - mx, dy = y[i] - my; sxy += dx * dy; sxx += dx * dx; syy += dy * dy; }
-  const d = Math.sqrt(sxx * syy);
-  return d ? sxy / d : null;
-}
 
 init();
 
@@ -67,13 +70,13 @@ async function init() {
   runs.forEach((run) => {
     const o = document.createElement("option");
     o.value = run.name; o.textContent = run.name;
-    o.dataset.aggregators = JSON.stringify(run.aggregators);
-    o.dataset.axis = run.axis || "aggregator";
+    o.dataset.variants = JSON.stringify(run.variants);
+    o.dataset.axis = run.axis || "none";
     runSel.appendChild(o);
   });
   if (!runs.length) { $("status").textContent = "No trained runs found under output/."; return; }
   runSel.onchange = onRunChange;
-  $("aggregator").onchange = loadData;
+  $("variant").onchange = loadData;
   $("split").onchange = render;
   $("agg-views").onchange = render;
   $("agg-forks").onchange = render;
@@ -82,6 +85,11 @@ async function init() {
   $("fork-input").addEventListener("focus", showForkDrop);
   $("fork-input").addEventListener("input", showForkDrop);
   $("fork-input").addEventListener("blur", () => setTimeout(hideForkDrop, 120));
+  $("cult-clear").onclick = () => { CULT_INC.clear(); renderCultTags(); render(); };
+  $("cult-input").addEventListener("keydown", onCultInput);
+  $("cult-input").addEventListener("focus", showCultDrop);
+  $("cult-input").addEventListener("input", showCultDrop);
+  $("cult-input").addEventListener("blur", () => setTimeout(hideCultDrop, 120));
   $("tol-num").oninput = render;
   $("outliers-only").onchange = render;
   $("cl-save").onclick = saveChanges;
@@ -93,26 +101,25 @@ async function init() {
 
 function onRunChange() {
   const opt = $("run").selectedOptions[0];
-  const aggs = JSON.parse(opt.dataset.aggregators || "[]");
-  $("aggregator-label").textContent = prettyAxis(opt.dataset.axis);
-  const aggSel = $("aggregator");
-  aggSel.innerHTML = "";
-  aggs.forEach((a) => {
+  const variants = JSON.parse(opt.dataset.variants || "[]");
+  $("variant-label").textContent = prettyAxis(opt.dataset.axis);
+  const varSel = $("variant");
+  varSel.innerHTML = "";
+  variants.forEach((v) => {
     const o = document.createElement("option");
-    o.value = a; o.textContent = prettyAgg(a);
-    aggSel.appendChild(o);
+    o.value = v; o.textContent = prettyVariant(v);
+    varSel.appendChild(o);
   });
-  if (aggs.includes("mil_mean")) aggSel.value = "mil_mean";
   loadData();
 }
 
 async function loadData() {
-  const run = $("run").value, agg = $("aggregator").value;
-  if (!run || !agg) return;
+  const run = $("run").value, variant = $("variant").value;
+  if (!run || !variant) return;
   $("status").textContent = "Loading…";
   let d;
   try {
-    d = await fetch(`/api/data?run=${encodeURIComponent(run)}&aggregator=${encodeURIComponent(agg)}`).then((r) => r.json());
+    d = await fetch(`/api/data?run=${encodeURIComponent(run)}&variant=${encodeURIComponent(variant)}`).then((r) => r.json());
   } catch (e) { d = { error: String(e) }; }
   if (!d || d.error) {
     DATA = null; Plotly.purge($("plot"));
@@ -130,10 +137,29 @@ async function loadData() {
   await loadChanges(run);
   SLOT_KEY = null;
   FORK_INC.clear(); FORK_EXC.clear(); renderForkTags(); hideForkDrop();
+  CULT_INC.clear(); renderCultTags(); hideCultDrop();
   buildViewPills(DATA.views);
   buildRoundPills(DATA.rounds);
+  applyDimVisibility();
   $("details").innerHTML = "<p class='hint'>Click a point to inspect a flower. Then relabel it: drag it onto another class band, press 1–6, or use the class buttons.</p>";
   render();
+}
+
+// Hide filters/toggles for dimensions that are trivial in this run (e.g. a single
+// view + single round → single image per flower, like ripeness-us). A dimension is
+// only worth filtering when it has >1 value; forks only when there's multi-capture
+// data to slice (otherwise the fork ids are one-per-flower and meaningless).
+function applyDimVisibility() {
+  const multiView = DATA.views.length > 1;
+  const multiRound = DATA.rounds.length > 1;
+  const show = (id, on) => { const el = $(id); if (el) el.style.display = on ? "" : "none"; };
+  show("views-group", multiView);
+  show("rounds-group", multiRound);
+  show("forks-group", multiView || multiRound);
+  show("agg-views-label", multiView);
+  show("agg-rounds-label", multiRound);
+  show("agg-group", multiView || multiRound);
+  show("cult-group", (DATA.cultivars || []).length > 1);
 }
 
 // Class levels (true values + spacing) are split-independent.
@@ -283,6 +309,53 @@ function forkAllowed(f) {
   return FORK_INC.size ? FORK_INC.has(f) : true;
 }
 
+// ---- cultivar tag filter (include-only; names are free text, so no token split) ----
+function showCultDrop() {
+  if (!DATA) return;
+  const q = $("cult-input").value.trim().toLowerCase();
+  const opts = (DATA.cultivars || []).filter((c) => !CULT_INC.has(c) && c.toLowerCase().includes(q));
+  const drop = $("cult-drop");
+  if (!opts.length) { drop.style.display = "none"; return; }
+  drop.innerHTML = opts.slice(0, 300).map((c, i) => `<div class="opt" data-i="${i}">${c}</div>`).join("");
+  drop.style.display = "block";
+  drop.querySelectorAll(".opt").forEach((el, i) => {
+    el.onmousedown = (e) => {
+      e.preventDefault();
+      CULT_INC.add(opts[i]);
+      $("cult-input").value = "";
+      hideCultDrop(); renderCultTags(); render();
+    };
+  });
+}
+function hideCultDrop() { $("cult-drop").style.display = "none"; }
+
+function onCultInput(e) {
+  if (e.key !== "Enter") return;
+  const raw = e.target.value.trim();
+  e.target.value = "";
+  if (!raw) return;
+  if (raw.toLowerCase() === "all") { CULT_INC.clear(); }
+  else {
+    const match = (DATA.cultivars || []).find((c) => c.toLowerCase() === raw.toLowerCase());
+    if (match) CULT_INC.add(match);
+  }
+  renderCultTags(); render();
+}
+function renderCultTags() {
+  const box = $("cult-tags");
+  box.innerHTML = "";
+  [...CULT_INC].sort().forEach((c) => {
+    const t = document.createElement("span");
+    t.className = "tag";
+    t.textContent = c;
+    const x = document.createElement("button");
+    x.className = "tagx"; x.textContent = "×";
+    x.onclick = () => { CULT_INC.delete(c); renderCultTags(); render(); };
+    t.appendChild(x); box.appendChild(t);
+  });
+}
+const cultAllowed = (c) => (CULT_INC.size ? CULT_INC.has(c) : true);
+
 // ---- tolerance ----
 const tol = () => {
   let v = parseFloat($("tol-num").value);
@@ -299,7 +372,8 @@ function currentPoints() {
   const t = tol();
 
   const recs = DATA.records.filter(
-    (r) => (split === "all" || r.split === split) && views.has(r.view_type) && rounds.has(r.round) && forkAllowed(parseInt(r.fork))
+    (r) => (split === "all" || r.split === split) && views.has(r.view_type) && rounds.has(r.round)
+      && forkAllowed(parseInt(r.fork)) && cultAllowed(r.cultivar)
   );
 
   const groups = new Map();
@@ -327,13 +401,22 @@ function computeStats(pts) {
   const recs = pts.flatMap((p) => p.recs);
   const byFlower = new Map();
   recs.forEach((r) => (byFlower.get(r.flower_id) || byFlower.set(r.flower_id, []).get(r.flower_id)).push(r));
-  const viewStds = [], milStds = [];
-  byFlower.forEach((fr) => {
-    viewStds.push(std(fr.map((r) => r.pred)));
+  // Round-to-round consistency = pooled within-fork std (repeatability S_r), 0–1 units.
+  // Per fork: std of its per-round mean-view predictions; pool SS / df across forks
+  // (the standard repeatability std, not the biased mean-of-stds). Forks are kept in
+  // natural data order (no sorting), so the plot reads class-by-class.
+  const perFork = [];   // {flower, klass, sd} for forks with >= 2 rounds
+  let ssTotal = 0, dfTotal = 0;
+  byFlower.forEach((fr, flower) => {
     const byRound = new Map();
     fr.forEach((r) => (byRound.get(r.round) || byRound.set(r.round, []).get(r.round)).push(r));
     const mils = [...byRound.values()].map((vs) => mean(vs.map((r) => r.pred)));
-    if (mils.length > 1) milStds.push(std(mils));
+    if (mils.length < 2) return;                       // need >= 2 rounds to have a wobble
+    const m = mean(mils);
+    const ss = mils.reduce((s, x) => s + (x - m) * (x - m), 0);
+    const df = mils.length - 1;
+    ssTotal += ss; dfTotal += df;
+    perFork.push({ flower, klass: effClass(flower), sd: Math.sqrt(ss / df) });
   });
 
   const t = tol();
@@ -341,38 +424,29 @@ function computeStats(pts) {
   const within = (thr) => (pts.length ? pts.filter((p) => Math.abs(p.y - p.x) <= thr).length / pts.length * 100 : 0);
   return {
     views: recs.length,
-    flowers: new Set(recs.map((r) => r.flower_id + "|" + r.round)).size,
-    uniqueFlowers: byFlower.size,
+    rounds: new Set(recs.map((r) => r.flower_id + "|" + r.round)).size,   // capture passes
+    flowers: byFlower.size,                                                // distinct real flowers
     rmse: pts.length ? rms(errs) : null,
-    mae: pts.length ? mean(errs.map(Math.abs)) : null,
-    bias: pts.length ? mean(errs) : null,
     inBandPct: within(t),
-    within1: CLASS_GAP ? within(CLASS_GAP) : null,
-    corr: pearson(pts.map((p) => p.x), pts.map((p) => p.y)),
-    viewStd: viewStds.length ? mean(viewStds) : null,
-    milStd: milStds.length ? mean(milStds) : null,
+    consistency: dfTotal ? Math.sqrt(ssTotal / dfTotal) : null,   // S_r, 0–1 units
+    perFork,
   };
 }
 
 function renderStats(s) {
   const f = (x, d = 3) => (x == null || isNaN(x) ? "—" : x.toFixed(d));
-  const cell = (val, label, title) => `<div class="stat" title="${title}"><span class="sv">${val}</span><span class="sl">${label}</span></div>`;
-  const grp = (name, cells) => `<div class="stat-grp"><div class="stat-gh">${name}</div><div class="stat-cells">${cells}</div></div>`;
+  const cell = (val, label, title) => `<div class="stat" title="${title}"><span class="sl">${label}</span><span class="sv">${val}</span></div>`;
+  const grp = (name, body) => `<div class="stat-grp"><div class="stat-gh">${name}</div>${body}</div>`;
+  const cells = (...c) => `<div class="stat-cells">${c.join("")}</div>`;
   $("stats").innerHTML =
-    grp("Counts",
-      cell(s.views, "views", "view images shown") +
-      cell(s.flowers, "flowers", "captured flowers — one fork at one round") +
-      cell(s.uniqueFlowers, "unique flowers", "distinct forks (rounds collapsed to one)")) +
-    grp("Accuracy",
-      cell(f(s.rmse), "RMSE", "root mean squared error — typical error size, penalises big misses") +
-      cell(f(s.mae), "MAE", "mean absolute error — average error size") +
-      cell(s.bias == null ? "—" : (s.bias >= 0 ? "+" : "") + f(s.bias), "bias", "mean(pred − true): + over-predicts, − under-predicts") +
-      cell(f(s.inBandPct, 1) + "%", "in band", "share within ±tolerance of true") +
-      cell(s.within1 == null ? "—" : f(s.within1, 1) + "%", "within 1 class", "share within one ripeness class of true") +
-      cell(f(s.corr), "correlation", "how well predicted tracks true, −1…1 (1 = perfect)")) +
-    grp("Consistency",
-      cell(f(s.viewStd), "spread · views", "avg per-flower std across views — lower = views agree") +
-      cell(f(s.milStd), "spread · rounds", "avg per-flower std across rounds — lower = repeat captures agree"));
+    grp("Counts", cells(
+      cell(s.views, "views", "view images shown"),
+      cell(s.rounds, "rounds", "capture passes — one set of views for a flower"),
+      cell(s.flowers, "flowers", "distinct real flowers"))) +
+    grp("Performance", cells(
+      cell(f(s.rmse), "RMSE", "root mean squared error — typical error size on the 0–1 scale"),
+      cell(f(s.inBandPct, 1) + "%", "accuracy", "share of predictions within ±tolerance of true"),
+      cell(f(s.consistency), ROUND_STD, "round-to-round repeatability std (0–1): re-pass the same bud, how much the grade moves — lower is better")));
 }
 
 // ---- class legend (boxed, click to toggle) ----
@@ -403,7 +477,8 @@ function render() {
   const all = currentPoints();
   let pts = all.filter((p) => !HIDDEN.has(p.klass));
   if ($("outliers-only").checked) pts = pts.filter((p) => !p.inBand);
-  renderStats(computeStats(pts));
+  const s = computeStats(pts);
+  renderStats(s);
   renderLegend();
 
   const traces = [];
@@ -428,16 +503,55 @@ function render() {
       marker: { size: 11, color: css("--text-strong"), line: { color: css("--panel-strong"), width: 1.4 } },
     });
   }
+  // Round-to-round consistency on the right-side y2 (same 0–1 scale): one line PER
+  // class, each within its own band (x = the fork's slot) and sorted by x so it
+  // doesn't cross — a single line across classes would zig-zag the whole plot,
+  // because x is true-ripeness, not a fork index. Coloured by class to match the scatter.
+  const hasConsistency = s.perFork.length > 0;   // no multi-round flowers → no bottom lane
+  if (hasConsistency) {
+    const byClass = new Map();
+    s.perFork.forEach((p) => (byClass.get(p.klass) || byClass.set(p.klass, []).get(p.klass)).push(p));
+    byClass.forEach((forks, klass) => {
+      const sorted = forks.slice().sort((a, b) => slotX(a.flower) - slotX(b.flower));
+      traces.push({
+        type: "scattergl", mode: "lines+markers", name: `${ROUND_STD} ${klass}`,
+        xaxis: "x2", yaxis: "y2", showlegend: false,
+        x: sorted.map((p) => slotX(p.flower)), y: sorted.map((p) => p.sd),
+        text: sorted.map((p) => forkLabel(p.flower, p.klass)),
+        line: { color: classColor(klass), width: 1.2 }, marker: { color: classColor(klass), size: 4 },
+        hovertemplate: `%{text}<br>${ROUND_STD} %{y:.3f}<extra></extra>`,
+      });
+    });
+    if (s.consistency != null) traces.push({   // overall S_r reference (neutral dashed)
+      type: "scattergl", mode: "lines", xaxis: "x2", yaxis: "y2", showlegend: false, hoverinfo: "skip",
+      x: [-0.15, 1.15], y: [s.consistency, s.consistency],
+      line: { color: css("--muted"), width: 1, dash: "dash" },
+    });
+  }
 
   const layout = {
-    title: { text: `${DATA.task} · ${prettyAgg(DATA.aggregator)} — predicted vs true (${$("split").value})`, font: { color: css("--text") } },
+    title: { text: `${DATA.task} · ${prettyVariant(DATA.variant)} — predicted vs true (${$("split").value})`, font: { color: css("--text") } },
     paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
     font: { color: css("--muted"), family: css("--font-family-base") },
-    xaxis: { title: { text: "True Ripeness", standoff: 8 }, automargin: true, range: [-0.15, 1.15], zeroline: false, gridcolor: css("--line") },
-    yaxis: { title: { text: "Predicted", standoff: 8 }, automargin: true, range: [-0.05, 1.05], zeroline: false, gridcolor: css("--line") },
-    margin: { t: 40, r: 12, b: 40, l: 40 }, showlegend: false, dragmode: false,
+    margin: { t: 40, r: hasConsistency ? 52 : 14, b: 40, l: 40 }, showlegend: false, dragmode: false,
     hovermode: "closest", shapes: stairBands(tol()),
   };
+  if (hasConsistency) {
+    // Two stacked lanes sharing x: scatter (x/y, top) + consistency (x2/y2, bottom),
+    // with a small buffer. x2 `matches` x so the vertical gridlines line up across the
+    // gap; the x label/title appears once, under the bottom lane.
+    layout.xaxis = { range: [-0.15, 1.15], anchor: "y", zeroline: false, gridcolor: css("--line"), showticklabels: false };
+    layout.xaxis2 = { title: { text: "True Ripeness", standoff: 8 }, automargin: true, range: [-0.15, 1.15],
+                      anchor: "y2", matches: "x", zeroline: false, gridcolor: css("--line") };
+    layout.yaxis = { title: { text: "Predicted", standoff: 8 }, automargin: true, domain: [0.24, 1], range: [-0.05, 1.05], anchor: "x", zeroline: false, gridcolor: css("--line") };
+    layout.yaxis2 = { title: { text: "Round std", standoff: 8 }, anchor: "x2", side: "right",
+                      domain: [0, 0.18], rangemode: "tozero", autorange: true, showgrid: false, zeroline: false,
+                      tickfont: { color: css("--muted") }, titlefont: { color: css("--muted") } };
+  } else {
+    // No round-to-round data (e.g. single image per flower) → one full-height scatter.
+    layout.xaxis = { title: { text: "True Ripeness", standoff: 8 }, automargin: true, range: [-0.15, 1.15], anchor: "y", zeroline: false, gridcolor: css("--line") };
+    layout.yaxis = { title: { text: "Predicted", standoff: 8 }, automargin: true, range: [-0.05, 1.05], anchor: "x", zeroline: false, gridcolor: css("--line") };
+  }
   const gd = $("plot");
   Plotly.react(gd, traces, layout, { displayModeBar: false, responsive: true });
   if (!gd._bound) {
@@ -621,7 +735,7 @@ function showFlower(flower) {
       <h2 class="fork-title" title="collapse / expand all rounds">Fork ${fork}</h2>
       <span class="dmeta">Class <b>${oc}</b>${changed ? ` → <b>${ec}</b>` : ""}</span>
       <span class="dmeta">True Ripeness <b>${trueVal.toFixed(3)}</b></span>
-      <span class="dmeta">Flower Mean <b>${isNaN(flowerMean) ? "—" : flowerMean.toFixed(3)}</b> ± ${flowerStd.toFixed(3)}</span>
+      <span class="dmeta" title="mean of the round ripenesses ± round-to-round std (the round std)">Flower ripeness <b>${isNaN(flowerMean) ? "—" : flowerMean.toFixed(3)}</b> · round std ± ${flowerStd.toFixed(3)}</span>
       <div class="reassign"><span class="reassign-label">Set Class</span>${reassignBtns}</div>
     </div>`;
 
@@ -641,8 +755,8 @@ function showFlower(flower) {
         </figure>`;
     });
     html += `<div class="round-summary">
-        <div class="rs-row"><span class="rs-label">Mean Views</span><span class="rs-val ${milCls}">${isNaN(milMean) ? "—" : milMean.toFixed(3)}</span></div>
-        <div class="rs-row"><span class="rs-label">Std Dev</span><span class="rs-val">± ${roundStd.toFixed(3)}</span></div>
+        <div class="rs-row"><span class="rs-label">Round ripeness</span><span class="rs-val ${milCls}">${isNaN(milMean) ? "—" : milMean.toFixed(3)}</span></div>
+        <div class="rs-row"><span class="rs-label">View std</span><span class="rs-val">± ${roundStd.toFixed(3)}</span></div>
       </div>`;
     html += "</div></div>";
   });

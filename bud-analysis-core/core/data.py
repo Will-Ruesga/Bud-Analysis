@@ -1,22 +1,20 @@
 """Index, discovery, prep orchestrator, batching.
 
 One file by design — each piece is small and they share types and concepts
-(Coding Rule 3). See docs/core/data.md for the canonical CSV format and
-schemas.
+(Coding Rule 3).
 """
 
 import csv
 import json
 import random
 import re
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterator
 
 import numpy as np
 import pandas as pd
-
-CANONICAL_VIEW_TYPES: list[str] = ["top", "side_0", "side_1", "side_2", "side_3"]
 
 # Image extensions we'll pick up when walking class folders. Anything PIL can
 # read is fine in DATA_DIR; this filter only avoids hidden / sidecar files.
@@ -29,7 +27,7 @@ _DISK_TO_PYTHON = {
     "fileName": "file_name",
     "imageID": "image_id",
     "flowerID": "flower_id",
-    "forkID": "fork_id",
+    "roundID": "round_id",
     "viewID": "view_id",
     "viewType": "view_type",
     # `class`, `target`, `split` pass through unchanged.
@@ -65,12 +63,12 @@ def _python_to_disk(col: str) -> str:
 # -----------------------------------------------------------------------------
 
 
-def make_image_id(flower_id: str, view_id: int, fork_id: str = "") -> str:
-    """Embedding cache key. `<flower_id>_<fork_id>_<view_id>` when fork_id
+def make_image_id(flower_id: str, view_id: int, round_id: str = "") -> str:
+    """Embedding cache key. `<flower_id>_<round_id>_<view_id>` when round_id
     is non-empty, else `<flower_id>_<view_id>`. Does **not** rename any
     image file — only used as the .npy cache filename stem."""
-    if fork_id:
-        return f"{flower_id}_{fork_id}_{view_id}"
+    if round_id:
+        return f"{flower_id}_{round_id}_{view_id}"
     return f"{flower_id}_{view_id}"
 
 
@@ -160,7 +158,7 @@ def discover_class_folders(
     distinct classes).
 
     The default per-file row treats each image as one flower with a
-    single top view (no forks). This is the trivial case; multi-view
+    single top view (no rounds). This is the trivial case; multi-view
     datasets need either pre-organisation or a custom discoverer.
     """
     data_dir = Path(data_dir).resolve()
@@ -186,7 +184,7 @@ def discover_class_folders(
             if not img.is_file() or img.suffix.lower() not in _IMAGE_EXTS:
                 continue
             flower_id = img.stem
-            fork_id = ""
+            round_id = ""
             view_id = 0
             view_type = "top"
             rel = img.relative_to(data_dir)
@@ -194,9 +192,9 @@ def discover_class_folders(
             rows.append(
                 {
                     "file_name": file_name,
-                    "image_id": make_image_id(flower_id, view_id, fork_id),
+                    "image_id": make_image_id(flower_id, view_id, round_id),
                     "flower_id": flower_id,
-                    "fork_id": fork_id,
+                    "round_id": round_id,
                     "view_id": view_id,
                     "view_type": view_type,
                     "class": cls,
@@ -219,7 +217,7 @@ def discover_multiview(
     called with the path relative to `data_dir` (POSIX separators) and must
     return `(flower_id, view_type)` — or `None` to skip the file. Rows whose
     `view_type` is not in `views` are dropped; `view_id` is the position of
-    `view_type` within `views`; `fork_id` is empty (any rotation copies are
+    `view_type` within `views`; `round_id` is empty (any rotation copies are
     encoded by the task inside `flower_id`).
 
     The task owns only the naming convention (`parse`). Everything reusable —
@@ -259,7 +257,7 @@ def discover_multiview(
                     "file_name": str(rel).replace("/", "\\"),
                     "image_id": make_image_id(flower_id, view_id, ""),
                     "flower_id": flower_id,
-                    "fork_id": "",
+                    "round_id": "",
                     "view_id": view_id,
                     "view_type": view_type,
                     "class": cls,
@@ -290,34 +288,130 @@ def _infer_targets(class_names: list[str]) -> dict[str, float]:
 
 
 # -----------------------------------------------------------------------------
+# view enforcement
+# -----------------------------------------------------------------------------
+
+
+def _enforce_views(
+    rows: list[dict], views: list[str], incomplete_tolerance: float
+) -> list[dict]:
+    """Validate discovered rows against the task-declared `views`; return kept rows.
+
+    The task declares which views exist (any number, 1..N) via `views`; core is the
+    sole enforcer and never assumes a fixed view set. Two tiers:
+
+    Tier 1 — **structural mismatch, always fatal.** A discovered `view_type` not in
+    `views`, or a declared view that appears in *no* image, means the dataset/naming
+    does not match what the task declared. Raise and tell the user to fix and re-run
+    prepare. No threshold — a whole view being absent is unambiguously a mistake.
+
+    Tier 2 — **incomplete captures, bounded.** `(flower_id, round_id)` groups missing
+    one or more declared views are dropped, but only while they stay a fraction
+    `<= incomplete_tolerance` of all groups; above that the incompleteness is
+    systematic, so raise instead. `incomplete_tolerance` is declared by the task
+    (no default here). Single-view tasks pass 0.0 — with one view a group is either
+    present or not a row at all, so nothing is ever dropped.
+    """
+    declared = set(views)
+    seen = {r["view_type"] for r in rows}
+    if undeclared := seen - declared:
+        raise ValueError(
+            f"discover produced view type(s) {sorted(undeclared)} not in the declared "
+            f"views {views!r}; fix the task's naming convention and re-run prepare."
+        )
+    if absent := declared - seen:
+        raise ValueError(
+            f"declared view(s) {sorted(absent)} are not present in any image; the "
+            f"dataset/naming does not match the task declaration — fix and re-run prepare."
+        )
+
+    groups: dict = defaultdict(set)
+    for r in rows:
+        groups[(r["flower_id"], r["round_id"])].add(r["view_type"])
+    incomplete = {k for k, vts in groups.items() if vts != declared}
+    if incomplete:
+        frac = len(incomplete) / len(groups)
+        sample = sorted({fid for fid, _ in incomplete})[:10]
+        if frac > incomplete_tolerance:
+            raise ValueError(
+                f"{len(incomplete)}/{len(groups)} captures ({frac:.1%}) are missing one or "
+                f"more declared views {views!r}, above the task's INCOMPLETE_TOLERANCE="
+                f"{incomplete_tolerance:.1%}; this looks systematic — fix the dataset/naming "
+                f"and re-run prepare. e.g. {sample}"
+            )
+        print(
+            f"dropping {len(incomplete)}/{len(groups)} incomplete capture(s) "
+            f"({frac:.1%} <= tolerance {incomplete_tolerance:.1%}) missing a declared view; "
+            f"e.g. {sample}"
+        )
+        rows = [r for r in rows if (r["flower_id"], r["round_id"]) not in incomplete]
+    return rows
+
+
+# -----------------------------------------------------------------------------
 # splits
 # -----------------------------------------------------------------------------
 
 
+def _group_id(row: dict, group_key) -> tuple | str:
+    """The split-group a row belongs to. A single column name, or a tuple of
+    them for a composite key (e.g. `(cultivar, fork)`)."""
+    if isinstance(group_key, (list, tuple)):
+        return tuple(str(row[k]) for k in group_key)
+    return row[group_key]
+
+
 def _assign_splits(
-    rows: list[dict], val_ratio: float, test_ratio: float, seed: int
+    rows: list[dict],
+    val_ratio: float,
+    test_ratio: float,
+    seed: int,
+    group_key="flower_id",
+    stratify_key: str | None = None,
 ) -> None:
     """Mutate `rows` in place, assigning `split` ∈ {train, val, test}.
 
-    Splits are at `flower_id` level — every row of a given flower lands
-    in the same split. Prevents leakage through rotation/fork copies.
+    Splits are at the **group** level — every row sharing a `group_key` value
+    lands in the same split, so no group is ever split across train/val/test.
+    `group_key` defaults to `flower_id` (every row of a flower together,
+    preventing leakage through rotation/round copies); a task can pass a
+    composite like `["cultivar", "fork"]` so all rounds of one physical flower
+    stay together even across captures.
+
+    `stratify_key` (a column name) makes the split **stratified**: each stratum's
+    groups are partitioned by the ratios independently, so every stratum value is
+    represented in train, val, and test. Used to guarantee every cultivar appears
+    in all three splits. With ≥3 groups in a stratum, val and test are each
+    forced to ≥1 group. `stratify_key=None` reproduces a single plain split.
     """
-    flower_ids = sorted({r["flower_id"] for r in rows})
     rng = random.Random(seed)
-    rng.shuffle(flower_ids)
+    stratum_of = {_group_id(r, group_key): (r[stratify_key] if stratify_key else None)
+                  for r in rows}
+    groups_by_stratum: dict = defaultdict(list)
+    for gid, stratum in stratum_of.items():
+        groups_by_stratum[stratum].append(gid)
 
-    n = len(flower_ids)
-    n_test = int(round(n * test_ratio))
-    n_val = int(round(n * val_ratio))
-
-    test_set = set(flower_ids[:n_test])
-    val_set = set(flower_ids[n_test : n_test + n_val])
+    test_set: set = set()
+    val_set: set = set()
+    for stratum in sorted(groups_by_stratum, key=lambda s: (s is not None, s)):
+        groups = sorted(groups_by_stratum[stratum])
+        rng.shuffle(groups)
+        n = len(groups)
+        n_test = int(round(n * test_ratio))
+        n_val = int(round(n * val_ratio))
+        if stratify_key and n >= 3:  # guarantee this stratum reaches every split
+            n_test = max(1, n_test)
+            n_val = max(1, n_val)
+            if n - n_test - n_val < 1:
+                n_val = n - n_test - 1
+        test_set.update(groups[:n_test])
+        val_set.update(groups[n_test : n_test + n_val])
 
     for r in rows:
-        fid = r["flower_id"]
-        if fid in test_set:
+        gid = _group_id(r, group_key)
+        if gid in test_set:
             r["split"] = "test"
-        elif fid in val_set:
+        elif gid in val_set:
             r["split"] = "val"
         else:
             r["split"] = "train"
@@ -338,29 +432,47 @@ def run(
     seed: int = 42,
     discover: Callable[..., list[dict]] | None = None,
     extra: dict | None = None,
+    group_key="flower_id",
+    stratify_key: str | None = None,
+    *,
+    incomplete_tolerance: float,
 ) -> pd.DataFrame:
-    """End-to-end prep. Discovers rows under `data_dir`, assigns splits at
-    `flower_id` level, and writes `<run>/prep/{index.csv, info.json}`. Does
-    **not** copy images.
+    """End-to-end prep. Discovers rows under `data_dir`, enforces the declared
+    `views`, assigns splits at `group_key` level, and writes
+    `<run>/prep/{index.csv, info.json}`. Does **not** copy images.
 
     `discover(data_dir, targets=...)` overrides the row scanner. Defaults to
     the single-view `discover_class_folders`; multi-view tasks pass a binding
-    of `discover_multiview` (with their filename `parse`). The flower-level
-    split runs on whatever rows come back, regardless of scanner.
+    of `discover_multiview` (with their filename `parse`). The split runs on
+    whatever rows survive enforcement, regardless of scanner.
 
-    `info.json` is the run manifest: it records the run identity and backbone
-    (from `ctx`), the absolute `data_dir` so downstream stages
-    (`embeddings.extract`) can resolve `fileName` columns against the right
-    root, and any `extra` keys the task snapshots (e.g. its training config)
-    so `train`/`export` can read everything from the run alone.
+    `group_key`/`stratify_key` control the split (see `_assign_splits`): default
+    is a plain `flower_id`-level split; a task can group by a composite (e.g.
+    `["cultivar", "fork"]`) and stratify by a column (e.g. `cultivar`) to keep a
+    physical flower's captures together and put every cultivar in every split.
+
+    `views` is the task-declared view set (1..N); `_enforce_views` validates the
+    discovered rows against it and drops/raises per `incomplete_tolerance` (a
+    task-declared fraction, required — core holds no default). `info.json` is the
+    run manifest: it records the run identity and backbone (from `ctx`), the
+    absolute `data_dir` so downstream stages (`embeddings.extract`) can resolve
+    `fileName` columns against the right root, and any `extra` keys the task
+    snapshots (e.g. its training config) so `train`/`export` can read everything
+    from the run alone.
     """
+    from core import backbones  # local import: avoid a backbones ↔ data import cycle
+
     data_dir = Path(data_dir).resolve()
     discover = discover or discover_class_folders
     rows = discover(data_dir, targets=targets)
-    _assign_splits(rows, val_ratio, test_ratio, seed)
+    rows = _enforce_views(rows, views, incomplete_tolerance)
+    _assign_splits(rows, val_ratio, test_ratio, seed, group_key, stratify_key)
 
     df = build_index(rows, ctx.index_csv)
-    _write_info_json(ctx, data_dir, views, targets, df, extra)
+    # Freeze the backbone's default input size into the manifest so every later
+    # stage uses the run's own size, not the live _VARIANTS constant.
+    image_size = backbones.image_size(ctx.backbone_name)
+    _write_info_json(ctx, data_dir, views, targets, df, incomplete_tolerance, image_size, extra)
     return df
 
 
@@ -370,6 +482,8 @@ def _write_info_json(
     views: list[str],
     targets: dict[str, float] | None,
     df: pd.DataFrame,
+    incomplete_tolerance: float,
+    image_size: int,
     extra: dict | None = None,
 ) -> None:
     info = {
@@ -381,6 +495,8 @@ def _write_info_json(
         "data_dir": str(data_dir),
         "created": datetime.now(timezone.utc).isoformat(),
         "views": views,
+        "image_size": image_size,
+        "incomplete_tolerance": incomplete_tolerance,
         "targets": targets,
         "class_distribution": {str(k): int(v) for k, v in df["class"].value_counts().items()},
         "per_split_counts": {str(k): int(v) for k, v in df["split"].value_counts().items()},

@@ -2,7 +2,7 @@
 
 A `RunContext` is built once from (date, cultivar, backbone_name, task)
 and exposes every output path the project uses. No other module hardcodes
-paths — they all flow through here. See docs/core/run_context.md.
+paths — they all flow through here.
 """
 
 import json
@@ -129,6 +129,27 @@ class RunContext:
     def data_dir(self) -> Path:
         """Absolute dataset path recorded in the run manifest (`prep/info.json`)."""
         return Path(self.info()["data_dir"])
+
+    @property
+    def image_size(self) -> int:
+        """The run's frozen input image size (from `prep/info.json`).
+
+        Set by `prepare` from the backbone's default; read here so extraction and
+        export use the run's own size, not the live `backbones._VARIANTS` constant.
+        Runs prepared before this field existed lack it — fail loud (re-prepare).
+        """
+        info = self.info()
+        if "image_size" not in info:
+            raise ValueError(
+                f"{self.prep_info_json} has no 'image_size' — this run predates the "
+                "frozen-size field; re-run prepare to record it."
+            )
+        return info["image_size"]
+
+    @property
+    def name(self) -> str:
+        """The run's label, used in the ONNX filename — the run's `cultivar`."""
+        return self.cultivar
 
     def index(self):
         """Read index.csv lazily and cache in-process.

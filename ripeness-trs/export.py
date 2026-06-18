@@ -25,7 +25,7 @@ def main(run_dir, variant=None, heads=None, output_path=None):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("-run", required=True, help="run dir from prepare (e.g. output/<run>)")
+    ap.add_argument("--run", "-r", required=True, help="run dir from prepare (e.g. output/<run>)")
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--variant", help="which kept variant to export, e.g. mse / huber / auto")
     g.add_argument("--heads", nargs="+", help="multi-task: task:variant, e.g. ripeness:auto defects:huber")

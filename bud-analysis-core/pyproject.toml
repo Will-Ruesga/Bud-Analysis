@@ -22,13 +22,9 @@ dependencies = [
     "scikit-learn",
     "umap-learn",
     "onnx",
+    "onnxruntime",  # runs the exported ONNX (export round-trip tests + downstream inference)
     "Flask>=3.0.0",  # the bundled viewer app (bud-analysis-core/viewer) — core ships with it
-]
-
-[project.optional-dependencies]
-dev = [
-    "pytest",
-    "onnxruntime",
+    "pytest",  # the test suite ships with core, so a plain editable install can run it
 ]
 
 [tool.setuptools]

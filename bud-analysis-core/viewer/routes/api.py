@@ -11,19 +11,19 @@ api_bp = Blueprint("api", __name__, url_prefix="/api")
 
 @api_bp.route("/runs")
 def runs():
-    """Available runs with their trained aggregators."""
+    """Available runs with their trained variants."""
     return jsonify({"runs": list_runs()})
 
 
 @api_bp.route("/data")
 def data():
-    """Per-view records for one run + aggregator head."""
+    """Per-view records for one run + variant head."""
     run = request.args.get("run", "").strip()
-    agg = request.args.get("aggregator", "").strip()
-    if not run or not agg:
-        abort(400, "run and aggregator are required")
+    variant = request.args.get("variant", "").strip()
+    if not run or not variant:
+        abort(400, "run and variant are required")
     try:
-        return jsonify(load_records(run, agg))
+        return jsonify(load_records(run, variant))
     except FileNotFoundError as exc:
         abort(404, str(exc))
     except ValueError as exc:

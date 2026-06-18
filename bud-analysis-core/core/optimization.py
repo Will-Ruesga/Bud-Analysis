@@ -1,7 +1,7 @@
 """Optuna helpers shared by every task's study.
 
 Three task-agnostic pieces; the study, search space, and objective body live
-in `task/train.py`. See docs/core/optimization.md.
+in `task/train.py`.
 """
 
 import json
@@ -77,24 +77,38 @@ def keep_best_per_variant(
     return kept
 
 
+def _variant_key(trial: optuna.trial.FrozenTrial, group_params: list[str]) -> str | None:
+    """Composite variant id for a trial: its `group_params` values joined by '-'.
+
+    Empty `group_params` (nothing compared) → the single `"default"` variant. A
+    trial missing one of the params (shouldn't happen) → None, so it is skipped.
+    """
+    if not group_params:
+        return "default"
+    if any(p not in trial.params for p in group_params):
+        return None
+    return "-".join(str(trial.params[p]) for p in group_params)
+
+
 def write_study_summary(
     study: optuna.Study,
     out_dir: Path,
-    group_param: str = "loss",
+    group_params: list[str],
     metric_key: str = "selection_score",
 ) -> Path:
     """Write `<out_dir>/study_summary.json` (canonical schema).
 
-    `trials[]` holds only the survivors — the best completed trial per
-    `group_param` value (the compared dimension) — while `n_trials`/`n_completed`
-    reflect the whole study.
+    `group_params` is the list of compared dimensions (the optuna params that vary
+    across variants); trials are grouped by their composite value (see
+    `_variant_key`). `trials[]` holds only the survivors — the best completed trial
+    per variant — while `n_trials`/`n_completed` reflect the whole study.
     """
     minimize = study.direction == optuna.study.StudyDirection.MINIMIZE
     completed = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
 
     best: dict[str, optuna.trial.FrozenTrial] = {}
     for t in completed:
-        value = t.params.get(group_param)
+        value = _variant_key(t, group_params)
         if value is None:
             continue
         if value not in best or (
@@ -119,7 +133,7 @@ def write_study_summary(
         "direction": "minimize" if minimize else "maximize",
         "n_trials": len(study.trials),
         "n_completed": len(completed),
-        "compared": group_param,
+        "compared": group_params,
         "variants_kept": sorted(best),
         "best_value": study.best_value,
         "best_params": study.best_params,

@@ -12,14 +12,19 @@ OUTPUT_DIR = str(Path(__file__).resolve().parent.parent / "output")
 
 # Run identity
 DATE = datetime.now().strftime("%Y_%m_%d")
-CULTIVAR = "GrootGroot-GardeniaS1"
-TASK = "ripeness"
+TASK = "ripeness-trs"  # machine-specific task name → distinguishes result dirs + ONNX from -us
 
 # Raw data (dataset path is passed at runtime: `python prepare.py --data_dir <path>`)
 # Maps the trailing filename index `_0.._4` → view name. The rig captures the
 # four sides first and the top-down view LAST (`_4`), confirmed by eye on the
 # images — NOT `_0`. The mapping must be right so each view label is accurate.
 VIEWS = ["side_0", "side_1", "side_2", "side_3", "top"]
+
+# Fraction of (flower, round) captures allowed to be missing one or more of the
+# declared views before prepare hard-errors. A few flaky partial captures out of
+# hundreds are dropped (loudly); a systematic shortfall above this fraction means
+# the dataset/naming doesn't match the declaration, so prepare refuses it.
+INCOMPLETE_TOLERANCE = 0.05
 
 # Backbones. Checkpoints are vendored inside the installed core package, so paths
 # are derived from the package location — no machine-specific path to edit. Add an
@@ -51,17 +56,21 @@ HPARAMS = {
     "robustness_beta": 0.5,
 }
 
-# Optuna search space. The compared dimension is the LOSS (one kept winner per
-# loss → `comparison.png` shows them side by side); everything else is searched
-# within each.
-#   loss                — accuracy term: "mse" vs "huber" (the consistency penalty
-#                         rides on top of either).
-#   lambda_consistency  — weight of the per-fork view-variance penalty added to the
-#                         training loss; [lo, hi] is searched. Teaches the head to
-#                         give the same ripeness across views. Disabled per-run via
-#                         `train.py --consistency-loss off` (pins λ to 0).
+# Comparison grid. `prepare --compare` picks which of these dims to vary; the
+# cross-product of the picked dims is trained (one kept head per combination,
+# shown side by side in `comparison.png`), and unpicked dims use their `default`.
+# Only dims listed here are valid for `--compare`.
+#   loss        — accuracy term: "mse" vs "huber".
+#   consistency — per-view consistency penalty: "off" (λ=0) vs "on" (λ searched below).
+COMPARE_DIMS = {
+    "loss":        {"values": ["mse", "huber"], "default": "huber"},
+    "consistency": {"values": ["off", "on"],    "default": "on"},
+}
+
+# Optuna search space — searched *within* each compared variant, not across.
+#   lambda_consistency — strength of the per-round view-variance penalty when
+#                        consistency is "on"; [lo, hi] is searched ("off" pins λ=0).
 OPT_N_TRIALS = 100
 OPT_SEARCH_SPACE = {
-    "loss": ["mse", "huber"],
     "lambda_consistency": [0.0, 0.5],
 }

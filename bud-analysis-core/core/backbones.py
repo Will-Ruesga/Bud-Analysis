@@ -2,7 +2,7 @@
 
 Provides a uniform `forward(image) -> (B, D)` over the vendored DINOv3
 source, plus the canonical preprocessing transform shared between
-extraction and ONNX export. See docs/core/backbones.md.
+extraction and ONNX export.
 """
 
 import sys
@@ -41,34 +41,44 @@ def feature_dim(backbone_name: str) -> int:
     return _VARIANTS[backbone_name]["feature_dim"]
 
 
-def preprocess(images: torch.Tensor, backbone_name: str) -> torch.Tensor:
+def image_size(backbone_name: str) -> int:
+    """Default input image size for a variant. Raises KeyError on unknown names.
+
+    This is the **prepare-time default**: `prepare` reads it once and freezes the
+    value into the run manifest, so every later stage uses the run's own size and
+    a future change to `_VARIANTS` never silently rescales an existing run.
+    """
+    return _VARIANTS[backbone_name]["image_size"]
+
+
+def preprocess(images: torch.Tensor, backbone_name: str, image_size: int) -> torch.Tensor:
     """Resize + normalise a `(N, 3, H, W)` float batch in `[0, 255]` to
-    `(N, 3, S, S)` normalised tensors.
+    `(N, 3, S, S)` normalised tensors, where `S = image_size`.
 
     The **single source of truth** for pixel preprocessing — `eval_transform`
     wraps it at extraction time and `export` calls it inside the ONNX graph, so
     training and inference pixels are produced by the *same* torch op with the
-    *same* constants (`image_size`, `mean`, `std` from `_VARIANTS`). No PIL
-    resize anywhere, so nothing diverges between train and inference.
+    *same* `image_size` (the run's frozen size) and `mean`/`std` (from `_VARIANTS`).
+    No PIL resize anywhere, so nothing diverges between train and inference.
     """
     variant = _VARIANTS[backbone_name]
-    size = variant["image_size"]
     mean = images.new_tensor(variant["mean"]).view(1, 3, 1, 1)
     std = images.new_tensor(variant["std"]).view(1, 3, 1, 1)
     # Bicubic matches DINOv3's eval transform (torchvision Resize BICUBIC); the
     # source cutouts are already square, so a direct square resize keeps the
     # whole flower instead of centre-cropping its periphery. align_corners=False
     # + no antialias keeps torch-eager and the ONNX Resize op numerically aligned.
-    x = F.interpolate(images, size=(size, size), mode="bicubic", align_corners=False)
+    x = F.interpolate(images, size=(image_size, image_size), mode="bicubic", align_corners=False)
     return (x / 255.0 - mean) / std
 
 
-def eval_transform(backbone_name: str) -> Callable:
+def eval_transform(backbone_name: str, image_size: int) -> Callable:
     """Return the canonical PIL → tensor preprocessing for this backbone.
 
     The returned callable takes a PIL.Image and returns a `(3, S, S)` float
-    tensor, resized + normalised via `preprocess` — the same op the ONNX graph
-    bakes in, so extraction and inference pixels match by construction.
+    tensor (`S = image_size`), resized + normalised via `preprocess` — the same op
+    the ONNX graph bakes in, so extraction and inference pixels match by
+    construction. `image_size` is the run's frozen size (from its manifest).
     """
     if backbone_name not in _VARIANTS:
         raise KeyError(f"Unknown backbone: {backbone_name!r}")
@@ -76,7 +86,7 @@ def eval_transform(backbone_name: str) -> Callable:
     def _transform(image: Image.Image) -> torch.Tensor:
         arr = np.asarray(image.convert("RGB"), dtype=np.float32)  # (H, W, 3) in [0, 255]
         chw = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)  # (1, 3, H, W)
-        return preprocess(chw, backbone_name).squeeze(0).contiguous()
+        return preprocess(chw, backbone_name, image_size).squeeze(0).contiguous()
 
     return _transform
 

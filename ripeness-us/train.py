@@ -8,6 +8,7 @@ keep best per aggregator → report each → study summary → comparison plot.
 """
 
 import argparse
+import itertools
 import json
 from types import SimpleNamespace
 
@@ -37,11 +38,11 @@ def _loss_fn(name):
 
 
 def _view_spread(per_view):
-    """(range_mean, std_mean) of per-view predictions, averaged over forks.
+    """(range_mean, std_mean) of per-view predictions, averaged over rounds.
 
     `per_view` is `(B, V, 1)` (the tensor from `mil_pool(..., return_views=True)`).
-    Range = mean over forks of `max - min` across views; std = mean of the
-    per-fork view std. Single-view aggregators (V=1) give 0 for both.
+    Range = mean over rounds of `max - min` across views; std = mean of the
+    per-round view std. Single-view aggregators (V=1) give 0 for both.
     """
     pv = per_view.reshape(per_view.shape[0], per_view.shape[1])  # (B, V)
     rng = float((pv.max(dim=1).values - pv.min(dim=1).values).mean())
@@ -49,28 +50,28 @@ def _view_spread(per_view):
     return rng, sd
 
 
-def _fork_to_fork_std(pooled, keys):
-    """Mean over flowers of the std of their fork predictions.
+def _round_to_round_std(pooled, keys):
+    """Mean over flowers of the std of their round predictions.
 
-    Only flowers with >= 2 forks contribute (a single fork has no spread).
-    `pooled` is a 1-D array of fork-level predictions aligned with `keys`
-    (`(flower_id, fork_id)`). Returns None if no flower has >= 2 forks.
+    Only flowers with >= 2 rounds contribute (a single round has no spread).
+    `pooled` is a 1-D array of round-level predictions aligned with `keys`
+    (`(flower_id, round_id)`). Returns None if no flower has >= 2 rounds.
     """
     by_flower: dict = {}
-    for (flower_id, _fork_id), p in zip(keys, pooled):
+    for (flower_id, _round_id), p in zip(keys, pooled):
         by_flower.setdefault(flower_id, []).append(float(p))
     stds = [float(np.std(v, ddof=1)) for v in by_flower.values() if len(v) > 1]
     return float(np.mean(stds)) if stds else None
 
 
 def _per_key_meta(index):
-    """{(flower_id, fork_id): {target, split, class, top_file}}."""
+    """{(flower_id, round_id): {target, split, class, top_file}}."""
     idx = index.copy()
-    idx["fork_id"] = idx["fork_id"].fillna("")
+    idx["round_id"] = idx["round_id"].fillna("")
     meta = {}
-    for (flower_id, fork_id), grp in idx.groupby(["flower_id", "fork_id"]):
+    for (flower_id, round_id), grp in idx.groupby(["flower_id", "round_id"]):
         top = grp[grp["view_type"] == "top"]
-        meta[(flower_id, fork_id)] = {
+        meta[(flower_id, round_id)] = {
             "target": float(grp["target"].iloc[0]),
             "split": grp["split"].iloc[0],
             "class": str(grp["class"].iloc[0]),
@@ -80,7 +81,7 @@ def _per_key_meta(index):
 
 
 def _forward(head, X, return_views=False):
-    """Pooled fork prediction `(B, 1)`; with `return_views`, also `per_view (B, V, 1)`.
+    """Pooled round prediction `(B, 1)`; with `return_views`, also `per_view (B, V, 1)`.
 
     `X` is always a stacked MIL bag `(N, V, D)` (all views, late fusion), reduced
     by `mil_pool`.
@@ -99,14 +100,21 @@ def _suggest_lambda(trial, search_space):
 
 
 def _objective(trial, ctx, index, emb, settings, scratch):
-    # The compared dimension is the loss; the view pipeline is fixed (mil_mean).
-    loss_name = trial.suggest_categorical("loss", settings.OPT_SEARCH_SPACE["loss"])
+    # Compared dimensions (the grid) come from the manifest; everything else in
+    # OPT_SEARCH_SPACE is searched within each variant. View pipeline is mil_mean.
+    compare = settings.COMPARE
+    chosen = {dim: trial.suggest_categorical(dim, vals) for dim, vals in compare.items()}
+    compared = [dim for dim, vals in compare.items() if len(vals) > 1]
+    compare_value = "-".join(str(chosen[d]) for d in compared) if compared else "default"
+
+    loss_name = chosen["loss"]
+    # consistency "on" → λ is searched; "off" (or single-view tasks without the dim) → λ=0.
+    consistency_on = chosen.get("consistency", "on") == "on"
     spec = settings.HEAD_SPEC
-    # "old way" mode: λ pinned to 0, the consistency term is a no-op and isn't searched.
-    lam = _suggest_lambda(trial, settings.OPT_SEARCH_SPACE) if getattr(settings, "CONSISTENCY_LOSS", True) else 0.0
+    lam = _suggest_lambda(trial, settings.OPT_SEARCH_SPACE) if consistency_on else 0.0
     beta = settings.HPARAMS.get("robustness_beta", 0.0)
 
-    samples, keys = aggregators.stack_views(index, emb)
+    samples, keys = aggregators.stack_views(index, emb, settings.VIEW_TYPES)
     meta = _per_key_meta(index)
     split = np.array([meta[k]["split"] for k in keys])
     y = torch.tensor([meta[k]["target"] for k in keys], dtype=torch.float32).unsqueeze(1)
@@ -125,7 +133,7 @@ def _objective(trial, ctx, index, emb, settings, scratch):
         head.train()
         opt.zero_grad()
         pred, per_view = _forward(head, X[train_mask], return_views=True)
-        # MSE on the fork prediction + λ · mean per-fork variance across views.
+        # MSE on the round prediction + λ · mean per-round variance across views.
         # Variance (not std/range): smooth gradient, → 0 cleanly as views agree.
         consistency = per_view.var(dim=1, unbiased=False).mean()
         loss = loss_fn(pred, y[train_mask]) + lam * consistency
@@ -151,7 +159,7 @@ def _objective(trial, ctx, index, emb, settings, scratch):
 
     test_keys = [k for k, m in zip(keys, test_mask) if m]
     view_range, view_std = _view_spread(pv_test)            # test split, human-facing
-    fork_std = _fork_to_fork_std(pt.squeeze(1).numpy(), test_keys)
+    round_std = _round_to_round_std(pt.squeeze(1).numpy(), test_keys)
     val_view_range, _ = _view_spread(pv_val)                # selection uses val, not test
     # Robustness-aware selection: accuracy + β · view disagreement (lower is better).
     selection_score = history[-1]["val_rmse"] + beta * val_view_range
@@ -163,11 +171,13 @@ def _objective(trial, ctx, index, emb, settings, scratch):
         "val_mae": history[-1]["val_mae"],
         "view_range": view_range,
         "view_std": view_std,
-        "fork_std": fork_std,
+        "round_std": round_std,
         "val_view_range": val_view_range,
         "selection_score": selection_score,
         "loss": loss_name,
-        "compare_axis": "loss",   # the dimension the study keeps one winner per (viewer reads this)
+        "consistency": "on" if consistency_on else "off",
+        "compare_value": compare_value,   # variant id = compared dims' values (kept-dir name)
+        "compare_axis": ",".join(compared) if compared else "none",  # viewer reads this
         "lambda_consistency": lam,
         "robustness_beta": beta,
         "history": history,
@@ -192,7 +202,7 @@ def _write_predictions(path, keys, test_mask, meta, preds):
         {
             "fileName": meta[k]["top_file"],
             "flowerID": k[0],
-            "forkID": k[1],
+            "roundID": k[1],
             "class": meta[k]["class"],
             "target": meta[k]["target"],
             "prediction": float(pr),
@@ -218,24 +228,24 @@ def _load_result(agg_dir):
     )
 
 
-def main(run_dir, overrides=None, consistency_loss=None):
+def main(run_dir, overrides=None):
     """Run the full sweep for a prepared run: extract → study → keep best → report → comparison.
 
     Everything is read from `<run>/prep/info.json` (data, backbone, frozen
-    training config). `overrides` is a partial hparams dict (from the CLI
-    flags) layered on top of the manifest's `hparams`. `consistency_loss` toggles
-    the view-consistency penalty (TEMP CLI flag); None defaults to on.
+    training config, including the `compare` grid). `overrides` is a partial
+    hparams dict (from the CLI flags) layered on top of the manifest's `hparams`.
     """
     ctx = RunContext.from_info_json(run_dir)
     info = ctx.info()
     hparams = {**info["hparams"], **(overrides or {})}
     hs = info["head_spec"]
-    consistency = True if consistency_loss is None else consistency_loss
     settings = SimpleNamespace(
         OPT_SEARCH_SPACE=info["opt_search_space"],
         HEAD_SPEC=HeadSpec(hs["aggregator_name"], tuple(hs["hidden_dims"]), hs["dropout"]),
         HPARAMS=hparams,
-        CONSISTENCY_LOSS=consistency,
+        COMPARE=info["compare"],
+        # The run's declared views (any count); stack_views takes these explicitly.
+        VIEW_TYPES=info["views"],
     )
 
     emb = embeddings.extract(ctx)
@@ -262,8 +272,9 @@ def main(run_dir, overrides=None, consistency_loss=None):
             best = "—"
         status.set_description_str(f"  last: trial {trial.number + 1} · score={val} · best={best}")
 
-    for loss_name in settings.OPT_SEARCH_SPACE["loss"]:
-        study.enqueue_trial({"loss": loss_name})
+    # Seed every grid combination so each variant is sampled at least once.
+    for combo in itertools.product(*settings.COMPARE.values()):
+        study.enqueue_trial(dict(zip(settings.COMPARE.keys(), combo)))
     study.optimize(
         lambda t: _objective(t, ctx, index, emb, settings, scratch),
         n_trials=n_trials,
@@ -272,13 +283,14 @@ def main(run_dir, overrides=None, consistency_loss=None):
     bar.close()
     status.close()
 
+    compared = [dim for dim, vals in settings.COMPARE.items() if len(vals) > 1]
     kept = optimization.keep_best_per_variant(
-        ctx, scratch, group_key="loss", metric_key="selection_score"
+        ctx, scratch, group_key="compare_value", metric_key="selection_score"
     )
     for variant_dir in kept.values():
         plotting.report(ctx, _load_result(variant_dir))
     optimization.write_study_summary(
-        study, ctx.task_dir, group_param="loss", metric_key="selection_score"
+        study, ctx.task_dir, group_params=compared, metric_key="selection_score"
     )
     plotting.write_comparison(ctx, task=ctx.task)
     plotting.write_predictions(ctx)  # one combined predictions.csv in DATA_DIR
@@ -286,15 +298,10 @@ def main(run_dir, overrides=None, consistency_loss=None):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("-run", required=True, help="run dir from prepare (e.g. output/<run>)")
+    ap.add_argument("--run", "-r", required=True, help="run dir from prepare (e.g. output/<run>)")
     ap.add_argument("--lr", type=float)
     ap.add_argument("--epochs", type=int)
     ap.add_argument("--seed", type=int)
-    # TEMP: override the manifest's view-consistency switch per run, so a script can
-    # train old (off) vs new (on) loss without editing config.py between runs.
-    ap.add_argument("--consistency-loss", choices=["on", "off"], default=None,
-                    help="TEMP: 'off' = old loss (λ=0), 'on' = new loss; omit to use the manifest")
     a = ap.parse_args()
     overrides = {k: getattr(a, k) for k in ("lr", "epochs", "seed") if getattr(a, k) is not None}
-    consistency = None if a.consistency_loss is None else (a.consistency_loss == "on")
-    main(a.run, overrides, consistency_loss=consistency)
+    main(a.run, overrides)

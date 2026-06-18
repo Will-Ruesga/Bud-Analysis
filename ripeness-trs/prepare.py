@@ -5,7 +5,7 @@ The one configurator. Picks the dataset (`--data_dir`) and backbone
 `<run>/prep/{index.csv, info.json}`, and renders a dataset-distribution figure.
 `info.json` is the full run manifest: data path, backbone + checkpoint, splits,
 and a snapshot of the training config from `config.py`. After this,
-`train`/`export` need only `-run <run>` — they read everything from the
+`train`/`export` need only `--run <run>` — they read everything from the
 manifest. Splits, CSV write, and the manifest all live in `core.data`.
 """
 
@@ -30,7 +30,7 @@ def _parse_name(stem: str) -> tuple[str, str, int] | None:
     Naming: `<date>-<time>-<seq>-<sub>_<view>` (e.g.
     `2026_05_22-13_12_43_540-6-0_0`). `seq` is the bud's number within its
     class (→ physical flower), the `<date>-<time>` timestamp distinguishes
-    repeated captures (forks) of that bud, `<sub>` is a constant 0, and the
+    repeated captures (rounds) of that bud, `<sub>` is a constant 0, and the
     trailing `_<n>` is the camera view (0..4). Returns None for names that
     don't match.
     """
@@ -84,10 +84,10 @@ def _infer_targets(class_names: list[str]) -> dict[str, float]:
 
 
 def discover(data_dir, targets, views):
-    """Scan the dataset → index rows grouped flower=(class, seq), fork=capture.
+    """Scan the dataset → index rows grouped flower=(class, seq), round=capture.
 
     Each class folder holds repeated captures of numbered buds; each capture is
-    a full set of camera angles. Physical flower = `<class>_<seq>`; forks are the
+    a full set of camera angles. Physical flower = `<class>_<seq>`; rounds are the
     repeated captures of that flower, ranked chronologically by timestamp
     (0, 1, ...). `views` maps each filename page index → view name
     (`{4: 'top', 0: 'side_0', ...}`); unmapped indices are dropped. This is the
@@ -116,28 +116,24 @@ def discover(data_dir, targets, views):
             by_flower[(cls, seq)][timestamp][view_index] = rel
 
     rows: list[dict] = []
-    dropped = 0
+    # Emit every parsed capture; core's `_enforce_views` validates completeness
+    # against the declared views and drops/raises per INCOMPLETE_TOLERANCE. Forks
+    # are numbered chronologically per flower.
     for (cls, seq), captures in by_flower.items():
         target = float(targets[cls])
         flower_id = f"{cls}_{seq}"
-        # keep only complete captures (all len(views) angles) — the aggregators
-        # require a full view set per (flower, fork). fork ids number these.
-        complete = [ts for ts in sorted(captures) if len(captures[ts]) == len(views)]
-        dropped += len(captures) - len(complete)
-        for fork_id, timestamp in enumerate(complete):
+        for round_id, timestamp in enumerate(sorted(captures)):
             for view_index, file_name in sorted(captures[timestamp].items()):
                 rows.append({
                     "file_name": file_name,
-                    "image_id": make_image_id(flower_id, view_index, str(fork_id)),
+                    "image_id": make_image_id(flower_id, view_index, str(round_id)),
                     "flower_id": flower_id,
-                    "fork_id": str(fork_id),
+                    "round_id": str(round_id),
                     "view_id": view_index,
                     "view_type": views[view_index],
                     "class": cls,
                     "target": target,
                 })
-    if dropped:
-        print(f"dropped {dropped} incomplete capture(s) missing one or more of the {len(views)} views")
     return rows
 
 
@@ -174,23 +170,40 @@ def _config_snapshot(config) -> dict:
     }
 
 
-def main(config, data_dir, backbone=None, cultivar=None, views=None,
-         val_ratio=0.15, test_ratio=0.15, seed=None):
+def _compare_grid(config, selected) -> dict[str, list]:
+    """Build the frozen comparison grid `{dim: [values…]}` from `--compare`.
+
+    A picked dim contributes all its `values`; an unpicked dim contributes only its
+    `default` (a single value). The cross-product of these lists is the set of
+    variants `train.py` will fit. Empty selection → every dim a singleton → 1 variant.
+    """
+    selected = set(selected or [])
+    unknown = selected - set(config.COMPARE_DIMS)
+    if unknown:
+        raise ValueError(f"--compare {sorted(unknown)} not in COMPARE_DIMS {sorted(config.COMPARE_DIMS)}")
+    return {
+        dim: (spec["values"] if dim in selected else [spec["default"]])
+        for dim, spec in config.COMPARE_DIMS.items()
+    }
+
+
+def main(config, data_dir, cultivar, backbone=None, views=None,
+         val_ratio=0.15, test_ratio=0.15, seed=None, compare=None):
     """Scan the dataset → write `<run>/prep/{index.csv, info.json}`; return the run dir.
 
     `data_dir` is the raw dataset folder; its absolute path is recorded in the
     manifest so downstream stages resolve it without it being passed again.
     `backbone` selects the checkpoint from `config.BACKBONE_CHECKPOINTS`
-    (defaults to `config.BACKBONE_NAME`); `cultivar` names the run (defaults to
-    `config.CULTIVAR`). `views` is a `{page_index: view_name}` map (see
-    `parse_views`); when None it falls back to `config.VIEWS` (positional).
+    (defaults to `config.BACKBONE_NAME`); `cultivar` names the run (required).
+    `views` is a `{page_index: view_name}` map (see `parse_views`); when None it
+    falls back to `config.VIEWS` (positional).
     """
     backbone = backbone or config.BACKBONE_NAME
     view_map = views if views is not None else {i: v for i, v in enumerate(config.VIEWS)}
     view_names = [view_map[i] for i in sorted(view_map)]
     ctx = RunContext(
         date=config.DATE,
-        cultivar=cultivar or config.CULTIVAR,
+        cultivar=cultivar,
         backbone_name=backbone,
         task=config.TASK,
         backbone_checkpoint=config.BACKBONE_CHECKPOINTS[backbone],
@@ -207,7 +220,8 @@ def main(config, data_dir, backbone=None, cultivar=None, views=None,
         test_ratio=test_ratio,
         seed=seed if seed is not None else config.HPARAMS["seed"],
         discover=scan,
-        extra=_config_snapshot(config),
+        incomplete_tolerance=config.INCOMPLETE_TOLERANCE,
+        extra={**_config_snapshot(config), "compare": _compare_grid(config, compare)},
     )
     plotting.plot_dataset_distribution(ctx, df)
     return ctx.root
@@ -217,14 +231,17 @@ if __name__ == "__main__":
     import config as cfg
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data_dir", "-dir", required=True, help="path to the raw dataset folder")
+    ap.add_argument("--dataset", "-d", dest="data_dir", required=True,
+                    help="path to the raw dataset folder")
     ap.add_argument(
         "--backbone", "-bkb", default=cfg.BACKBONE_NAME, choices=list(cfg.BACKBONE_CHECKPOINTS),
         help="backbone to use for this run",
     )
-    ap.add_argument("--cultivar", "-c", default=cfg.CULTIVAR, help="run/cultivar name")
+    ap.add_argument("--cultivar", "-c", required=True, help="run/cultivar name")
     ap.add_argument("--views", "-v", default=None,
                     help="view groups, e.g. 'side: 0 1 2 3, top: 4'; omit to be prompted")
+    ap.add_argument("--compare", nargs="*", default=[], choices=list(cfg.COMPARE_DIMS),
+                    help="dims to compare (cross-product); omitted dims use their default")
     ap.add_argument("--val_ratio", type=float, default=0.15)
     ap.add_argument("--test_ratio", type=float, default=0.15)
     ap.add_argument("--seed", type=int)
@@ -242,6 +259,6 @@ if __name__ == "__main__":
 
     run = main(
         cfg, data_dir=a.data_dir, backbone=a.backbone, cultivar=a.cultivar, views=view_map,
-        val_ratio=a.val_ratio, test_ratio=a.test_ratio, seed=a.seed,
+        val_ratio=a.val_ratio, test_ratio=a.test_ratio, seed=a.seed, compare=a.compare,
     )
     print(f"prepared run: {run}")

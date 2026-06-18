@@ -5,7 +5,7 @@ across-variant `comparison.png` (e.g. mse vs huber). Both render what the task
 already produced — no metric recomputation. The per-sample `predictions.csv` and
 `metrics.json` are written by the task into the trial scratch dir and moved into
 place by `optimization.keep_best_per_variant` (which must read `metrics.json`
-before `report` ever runs). See docs/core/plotting.md.
+before `report` ever runs).
 """
 
 import json
@@ -44,7 +44,7 @@ def _pred_col(variant: str) -> str:
 def write_predictions(ctx: RunContext, variant_dirs: list[Path] | None = None) -> Path:
     """Merge the kept variants' predictions into one `<DATA_DIR>/predictions.csv`.
 
-    One row per test `(flower, fork)`; columns `fileName, flowerID, forkID,
+    One row per test `(flower, round)`; columns `fileName, flowerID, roundID,
     class, target`, then one `pred<Variant>` column per compared variant
     (`predMse`, `predHuber`, …). Replaces the old per-variant copies and removes
     any stale `predictions_<task>_*.csv` this pipeline wrote before.
@@ -57,14 +57,14 @@ def write_predictions(ctx: RunContext, variant_dirs: list[Path] | None = None) -
     merged = None
     for agg_dir in variant_dirs:
         df = data.read_index(agg_dir / "predictions.csv")
-        df["fork_id"] = df["fork_id"].fillna("").astype(str)
+        df["round_id"] = df["round_id"].fillna("").astype(str)
         col = _pred_col(agg_dir.name)
         if merged is None:
-            merged = df[["file_name", "flower_id", "fork_id", "class", "target"]].copy()
+            merged = df[["file_name", "flower_id", "round_id", "class", "target"]].copy()
             merged[col] = df["prediction"].to_numpy()
         else:
-            sub = df[["flower_id", "fork_id", "prediction"]].rename(columns={"prediction": col})
-            merged = merged.merge(sub, on=["flower_id", "fork_id"], how="outer")
+            sub = df[["flower_id", "round_id", "prediction"]].rename(columns={"prediction": col})
+            merged = merged.merge(sub, on=["flower_id", "round_id"], how="outer")
     if merged is None:
         raise ValueError(f"no variant predictions under {ctx.task_dir}")
 
@@ -173,7 +173,7 @@ def write_comparison(
 
 
 def _robustness_caption(metrics: dict) -> str | None:
-    """Compact 'view range / fork σ / λ' line for the scatter panel.
+    """Compact 'view range / round σ / λ' line for the scatter panel.
 
     Returns None when the run predates the robustness metrics (old `metrics.json`
     without these keys), so legacy comparisons render unchanged.
@@ -181,8 +181,8 @@ def _robustness_caption(metrics: dict) -> str | None:
     parts = []
     if metrics.get("view_range") is not None:
         parts.append(f"view range {metrics['view_range']:.3f}")
-    if metrics.get("fork_std") is not None:
-        parts.append(f"fork σ {metrics['fork_std']:.3f}")
+    if metrics.get("round_std") is not None:
+        parts.append(f"round σ {metrics['round_std']:.3f}")
     lam = metrics.get("lambda_consistency")
     if lam:
         parts.append(f"λ {lam:.3g}")
@@ -214,19 +214,19 @@ def _distribution_stats(df) -> dict:
 
     Returns sizes at three granularities per split and overall, plus the
     flower count per (class, split). A *flower* is a unique `flower_id`; a
-    *flower-fork* is a unique `(flower_id, fork_id)` — the granularity the
+    *round* is a unique `(flower_id, round_id)` — the granularity the
     training loop actually trains on (so the two differ only when the dataset
-    has fork numbers). Class and split are constant within a flower.
+    has round numbers). Class and split are constant within a flower.
     """
     d = df.copy()
-    d["fork_id"] = d["fork_id"].fillna("").astype(str)
+    d["round_id"] = d["round_id"].fillna("").astype(str)
     d["class"] = d["class"].astype(str)
 
     def sizes(rows):
         return {
             "images": len(rows),
             "flowers": rows["flower_id"].nunique(),
-            "flower-forks": rows.drop_duplicates(["flower_id", "fork_id"]).shape[0],
+            "rounds": rows.drop_duplicates(["flower_id", "round_id"]).shape[0],
         }
 
     sizes_by_split = {s: sizes(d[d["split"] == s]) for s in _SPLITS}
@@ -254,7 +254,7 @@ def plot_dataset_distribution(ctx: RunContext, df) -> Path:
     Left (the visual): unique flowers per class, stacked by split.
     Right (the numbers): a counts table, split × granularity, since those scales
     differ too much to compare as bars. Display terms match the dataset's
-    domain: a `(flower_id, fork_id)` sample is a "flower", a `flower_id` is a
+    domain: a `(flower_id, round_id)` sample is a "flower", a `flower_id` is a
     "unique flower". `df` is the snake_case index from `data.run`. Returns path.
     """
     stats = _distribution_stats(df)
@@ -281,7 +281,7 @@ def plot_dataset_distribution(ctx: RunContext, df) -> Path:
 
     # right: exact counts as a table (scales differ too much for shared bars).
     # stat keys -> the dataset's display terms.
-    gran_keys = ["flowers", "flower-forks", "images"]
+    gran_keys = ["flowers", "rounds", "images"]
     gran_labels = ["unique flowers", "flowers", "images"]
     rows = _SPLITS + ["all"]
     cell_text = [[f"{sizes[r][k]:,}" for k in gran_keys] for r in rows]
@@ -298,7 +298,7 @@ def plot_dataset_distribution(ctx: RunContext, df) -> Path:
             cell.set_text_props(weight="bold")
             cell.set_facecolor("#f4f4f4")
     ax_tbl.set_title("Counts by split", pad=2)
-    uf, fw = sizes["all"]["flowers"], sizes["all"]["flower-forks"]
+    uf, fw = sizes["all"]["flowers"], sizes["all"]["rounds"]
     im = sizes["all"]["images"]
     ax_tbl.text(0.5, 0.06, f"≈ {fw / uf:.0f} flowers / unique flower · {im / fw:.0f} views / flower",
                 ha="center", fontsize=9, color="#555", transform=ax_tbl.transAxes)

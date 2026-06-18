@@ -5,7 +5,6 @@ output/
 # Model weights
 *.pth
 checkpoints/
-bud-analysis-core/checkpoints/
 
 # Tests and docs
 bud-analysis-core/docs/
@@ -16,16 +15,18 @@ bud-analysis-core/core/dinov3/
 
 # Claude
 .claude/
-bud-analysis-core/CLAUDE.md
+**/CLAUDE.md
+.claudesync/
+
+# Goal / planning notes
+*GOAL*.md
 
 # Python envs / caches
 .venv*/
 __pycache__/
 *.egg-info/
-.pytest_cache/
 *.pyc
+.pytest_cache/
 
 # Misc
-ripeness/ideas.txt
-
-
+**/ideas.txt

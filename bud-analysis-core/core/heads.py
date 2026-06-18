@@ -1,8 +1,7 @@
 """Trainable regression head on top of frozen embeddings.
 
 One head class (`Regressor`), one factory (`build`), plus `mil_pool` — the MIL
-late-fusion forward shared by the task trainer and ONNX export. See
-docs/core/heads.md.
+late-fusion forward shared by the task trainer and ONNX export.
 """
 
 import torch

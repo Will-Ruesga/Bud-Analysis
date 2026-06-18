@@ -37,8 +37,8 @@
             </div>
             <div class="field-row">
               <div class="field">
-                <label class="form-label" for="aggregator" id="aggregator-label">Head</label>
-                <select id="aggregator" class="input"></select>
+                <label class="form-label" for="variant" id="variant-label">Variant</label>
+                <select id="variant" class="input"></select>
               </div>
               <div class="field">
                 <label class="form-label" for="split">Split</label>
@@ -52,11 +52,11 @@
             </div>
           </section>
 
-          <section class="filter-group">
+          <section class="filter-group" id="agg-group">
             <h3>Aggregate</h3>
             <div class="check-row">
-              <label class="check" title="one point per round — MIL mean over the selected views"><input type="checkbox" id="agg-views" checked /> Mean views</label>
-              <label class="check" title="collapse a fork's rounds — one point per fork"><input type="checkbox" id="agg-forks" /> Mean forks</label>
+              <label class="check" id="agg-views-label" title="one point per round — mean over the selected views"><input type="checkbox" id="agg-views" checked /> Mean views</label>
+              <label class="check" id="agg-rounds-label" title="collapse a flower's rounds — one point per flower"><input type="checkbox" id="agg-forks" /> Mean rounds</label>
             </div>
           </section>
 
@@ -68,17 +68,17 @@
             </div>
           </section>
 
-          <section class="filter-group">
+          <section class="filter-group" id="views-group">
             <h3>Views</h3>
             <div id="views" class="toggles"></div>
           </section>
 
-          <section class="filter-group">
+          <section class="filter-group" id="rounds-group">
             <h3>Rounds</h3>
             <div id="rounds" class="toggles"></div>
           </section>
 
-          <details class="filter-group fold">
+          <details class="filter-group fold" id="forks-group">
             <summary><h3>Forks</h3></summary>
             <div class="combo">
               <input id="fork-input" class="input" autocomplete="off" placeholder="pick or type a fork…" />
@@ -89,15 +89,29 @@
               <button type="button" id="forks-clear" class="btn btn--sm">All</button>
             </div>
           </details>
+
+          <details class="filter-group fold" id="cult-group">
+            <summary><h3>Cultivars</h3></summary>
+            <div class="combo">
+              <input id="cult-input" class="input" autocomplete="off" placeholder="pick or type a cultivar…" />
+              <div id="cult-drop" class="drop"></div>
+            </div>
+            <div class="fork-foot">
+              <div id="cult-tags" class="tags"></div>
+              <button type="button" id="cult-clear" class="btn btn--sm">All</button>
+            </div>
+          </details>
         </aside>
 
         <section class="content">
           <p id="status" class="hint"></p>
           <div class="plot-wrap panel">
-            <div id="plot" class="plot"></div>
-            <div id="legend" class="legend"></div>
+            <div class="plot-main">
+              <div id="plot" class="plot"></div>
+              <div id="legend" class="legend"></div>
+            </div>
+            <div id="stats" class="stats"></div>
           </div>
-          <div id="stats" class="stats panel"></div>
           <div id="details" class="details panel">
             <p class="hint">Click a point to inspect that fork's views.</p>
           </div>

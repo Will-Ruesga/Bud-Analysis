@@ -4,7 +4,7 @@ Walks `<task>/<variant>/` dirs (the filesystem is the registry), rebuilds each
 head from its `metrics.json` + `head.pt`, and traces a single graph: preprocess →
 shared backbone (per view) → per-head `mil_pool` → concat. Every head consumes all
 views (the one mil_mean late-fusion pipeline), so exported and trained pooling are
-the same op. See docs/core/export.md.
+the same op.
 """
 
 import json
@@ -15,7 +15,6 @@ from torch import nn
 
 from core import backbones, heads as heads_module
 from core.heads import mil_pool
-from core.data import CANONICAL_VIEW_TYPES
 from core.run_context import RunContext
 from core.schemas import HeadSpec
 
@@ -46,18 +45,22 @@ def export(
         raise ValueError("ctx.backbone_checkpoint is None; cannot load the backbone to export.")
     backbone = backbones.load_dinov3(ctx.backbone_name, ctx.backbone_checkpoint, device)
 
-    variant = backbones._VARIANTS[ctx.backbone_name]
-
-    # The one pipeline feeds every head all views (mil_mean late fusion).
-    graph = _ExportGraph(backbone, resolved, ctx.backbone_name).to(device).eval()
+    # The one pipeline feeds every head all views (mil_mean late fusion). The
+    # graph bakes the run's frozen image_size into its preprocess op.
+    image_size = ctx.image_size
+    graph = _ExportGraph(backbone, resolved, ctx.backbone_name, image_size).to(device).eval()
 
     if output_path is None:
         output_path = ctx.onnx_dir / _default_filename(ctx, resolved)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # The view dimension is baked into the graph (not a dynamic axis), so it must
+    # match the run's declared view set (1..N). Read it from the manifest — the
+    # single source of truth; no hard-coded view count or fallback.
+    n_views = len(ctx.info()["views"])
     dummy = torch.zeros(
-        1, len(CANONICAL_VIEW_TYPES), variant["image_size"], variant["image_size"], 3, device=device
+        1, n_views, image_size, image_size, 3, device=device
     )
     torch.onnx.export(
         graph,
@@ -118,27 +121,28 @@ def _auto_select(task_dir: Path) -> str:
 def _default_filename(ctx: RunContext, resolved) -> str:
     if len(resolved) == 1:
         task, agg = resolved[0][0], resolved[0][1]
-        return f"{task}_{agg}_{ctx.backbone_name}.onnx"
+        return f"{ctx.name}-{task}-{ctx.backbone_name}-{agg}.onnx"
     tasks = "_".join(sorted({task for task, _, _, _ in resolved}))
-    return f"{tasks}_{ctx.backbone_name}.onnx"
+    return f"{ctx.name}-{tasks}-{ctx.backbone_name}.onnx"
 
 
 class _ExportGraph(nn.Module):
     """Traceable graph: (B,V,H,W,3) → preprocess → backbone (per view) → per-head
     `mil_pool` → concat → (B,) or (B,N). Every head consumes all V views."""
 
-    def __init__(self, backbone, resolved, backbone_name):
+    def __init__(self, backbone, resolved, backbone_name, image_size):
         super().__init__()
         self.backbone = backbone
         self.heads = nn.ModuleList([head for _, _, _, head in resolved])
         self.backbone_name = backbone_name
+        self.image_size = image_size
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x.float()
         b, v = x.shape[0], x.shape[1]
         x = x.permute(0, 1, 4, 2, 3)  # (B, V, 3, H, W)
         x = x.reshape(b * v, x.shape[2], x.shape[3], x.shape[4])
-        x = backbones.preprocess(x, self.backbone_name)  # same op as eval_transform
+        x = backbones.preprocess(x, self.backbone_name, self.image_size)  # same op as eval_transform
         feats = self.backbone(x).reshape(b, v, -1)  # (B, V, D)
 
         outs = [mil_pool(head, feats) for head in self.heads]  # each (B, 1)

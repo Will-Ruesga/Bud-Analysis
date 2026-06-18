@@ -61,8 +61,10 @@ select.input { padding-right: 1.7rem; text-overflow: ellipsis; }
 .tag-excl { border-color: var(--error-border); background: var(--error-bg); color: var(--error-text); }
 .tagx { display: inline-flex; align-items: center; justify-content: center; width: 1rem; height: 1rem; border: 0; background: transparent; cursor: pointer; color: inherit; font-size: var(--t5-size); line-height: 1; padding: 0; }
 
-/* ---------- Plot (H3) — chart + legend row share one box ---------- */
-.plot-wrap.panel { padding: 0.4rem; }
+/* ---------- Plot (H3) — chart + legend on the left, metrics column on the right,
+   all in one box (no separate stats bubble, no wasted vertical space) ---------- */
+.plot-wrap.panel { padding: 0.4rem; display: flex; gap: 0.3rem; align-items: stretch; }
+.plot-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
 .plot { height: 540px; }
 
 /* class legend — a row inside the plot box, under the x-axis label, left-aligned,
@@ -75,14 +77,15 @@ select.input { padding-right: 1.7rem; text-overflow: ellipsis; }
 .legend-item.is-off { opacity: 0.35; }
 .legend-swatch { width: 0.6rem; height: 0.6rem; border-radius: 50%; flex-shrink: 0; }
 
-/* ---------- Summary stats (H3) ---------- */
-.stats { display: flex; flex-wrap: wrap; gap: 0.9rem 2.2rem; align-items: flex-start; }
-.stat-grp { display: flex; flex-direction: column; gap: 0.45rem; }
+/* ---------- Summary stats (H3) — right-hand column, one metric per row ---------- */
+.stats { display: flex; flex-direction: column; gap: 0.9rem; width: 112px; flex: 0 0 112px;
+         overflow: auto; }
+.stat-grp { display: flex; flex-direction: column; gap: 0.4rem; }
 .stat-gh { font-size: var(--t6-size); font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
-.stat-cells { display: flex; flex-wrap: wrap; gap: 0.6rem 1.3rem; }
-.stat { display: flex; flex-direction: column; line-height: 1.15; cursor: default; }
-.stat .sv { font-weight: 700; font-size: 1.15rem; color: var(--text-strong); }
+.stat-cells { display: flex; flex-direction: column; gap: 0.35rem; }
+.stat { display: flex; flex-direction: column; line-height: 1.15; cursor: default; }   /* name above number */
 .stat .sl { font-size: var(--t6-size); color: var(--muted); }
+.stat .sv { font-weight: 700; font-size: 1.1rem; color: var(--text-strong); }
 
 /* ---------- Detail (H3) ---------- */
 .hint { color: var(--t5-color); font-size: var(--t5-size); margin: 0; }
