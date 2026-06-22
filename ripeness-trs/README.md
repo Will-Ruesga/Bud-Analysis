@@ -1,7 +1,7 @@
 # ripeness-trs
 
-Concrete task on top of `bud-analysis-core`. Expects to sit beside the core
-repo (`../bud-analysis-core`).
+Concrete task on top of `base`. Expects to sit beside the core
+repo (`../base`).
 
 ## Setup (once)
 
@@ -13,7 +13,7 @@ core — so install core editable first, then layer the task on top:
 ```bash
 uv venv --python 3.12
 source .venv/bin/activate
-uv pip install -e /path/to/bud-analysis-core   # core package + its full dependency set
+uv pip install -e /path/to/base   # core package + its full dependency set
 uv pip install -r requirements.txt             # ripeness-specific deps (currently none)
 ```
 
@@ -49,4 +49,4 @@ everything from the manifest. Tweak hyperparameters per run without re-preparing
 `train.py --run output/<run> --lr 5e-4 --epochs 50`.
 
 Multi-view discovery: `prepare.discover()` maps each filename → `(flower, fork, view)`;
-adapt the `--views` spec to your camera naming. Everything else is `bud-analysis-core`.
+adapt the `--views` spec to your camera naming. Everything else is `base`.

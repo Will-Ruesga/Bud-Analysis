@@ -1,6 +1,6 @@
 # Ripeness — TASK-SPECIFIC dependencies only.
 #
-# This file does NOT install bud-analysis-core and WILL NOT work on its own.
+# This file does NOT install base and WILL NOT work on its own.
 # The task runs on top of the core package, which owns the shared dependency
 # set (torch, numpy, pandas, optuna, tqdm, matplotlib, ...). Install core into
 # this task's venv first, then this file — see README.md for the full setup.

@@ -3,8 +3,8 @@
 Single-view ripeness regression on the Universalsorter `BeursTrosrozen` bud
 instances — one crop per bud, labels in a `labels.csv`. Same engine as `ripeness-trs/`
 (frozen DINOv3 embeddings → MLP, Optuna MSE-vs-Huber sweep, regression to [0, 1]),
-adapted for a single view. Concrete task on top of `bud-analysis-core`; expects to
-sit beside the core repo (`../bud-analysis-core`).
+adapted for a single view. Concrete task on top of `base`; expects to
+sit beside the core repo (`../base`).
 
 ## Setup (once)
 
@@ -16,7 +16,7 @@ core — so install core editable first, then layer the task on top:
 ```bash
 uv venv --python 3.12
 source .venv/bin/activate
-uv pip install -e /path/to/bud-analysis-core   # core package + its full dependency set
+uv pip install -e /path/to/base   # core package + its full dependency set
 uv pip install -r requirements.txt             # task-specific deps (currently none)
 ```
 
@@ -70,4 +70,4 @@ Discovery: `prepare.discover()` reads `<data_dir>/labels.csv` (UTF-8 BOM, a lead
 `sep=;` line, then `Filename;LabelIndex;Cultivar`) and emits one `top`-view row per
 crop, each carrying its `cultivar` (the plant tag) and `fork` (tray position, parsed
 from the filename). Class 6 is merged into 5 (`_CLASS_REMAP`); classes not in
-`config.TARGETS` are skipped. Everything else is `bud-analysis-core`.
+`config.TARGETS` are skipped. Everything else is `base`.

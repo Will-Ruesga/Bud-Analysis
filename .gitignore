@@ -7,11 +7,11 @@ output/
 checkpoints/
 
 # Tests and docs
-bud-analysis-core/docs/
-bud-analysis-core/tests/
+base/docs/
+base/tests/
 
 # DINOv3
-bud-analysis-core/core/dinov3/
+base/core/dinov3/
 
 # Claude
 .claude/

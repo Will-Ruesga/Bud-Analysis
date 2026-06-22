@@ -29,8 +29,8 @@ The library lives in its own project directory. Tasks live in **sibling** projec
 
 ```
 <workspace>/                      ← can be anywhere on disk (in this repo it is `new_set_up/`)
-├── bud-analysis-core/           ← library project (this repo)
-│   ├── pyproject.toml            (package name "bud-analysis-core")
+├── base/           ← library project (this repo)
+│   ├── pyproject.toml            (package name "base")
 │   ├── README.md                 (this file)
 │   ├── CLAUDE.md                 (coding rules)
 │   ├── core/       (the Python package; snake_case)
@@ -41,7 +41,7 @@ The library lives in its own project directory. Tasks live in **sibling** projec
 └── ripeness-us/                  ← task project (separate)
 ```
 
-`pip install -e .` from inside `bud-analysis-core/` makes `from core.run_context import RunContext` work in every task project that uses the same Python environment.
+`pip install -e .` from inside `base/` makes `from core.run_context import RunContext` work in every task project that uses the same Python environment.
 
 ### `core/` — task-agnostic framework
 

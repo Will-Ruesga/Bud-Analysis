@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "bud-analysis-core"
+name = "base"
 version = "0.0.1"
 description = "Task-agnostic framework: frozen DINOv3 backbone + regression heads + Optuna sweep + unified ONNX export."
 requires-python = ">=3.10"
@@ -23,7 +23,7 @@ dependencies = [
     "umap-learn",
     "onnx",
     "onnxruntime",  # runs the exported ONNX (export round-trip tests + downstream inference)
-    "Flask>=3.0.0",  # the bundled viewer app (bud-analysis-core/viewer) — core ships with it
+    "Flask>=3.0.0",  # the bundled viewer app (base/viewer) — core ships with it
     "pytest",  # the test suite ships with core, so a plain editable install can run it
 ]
 

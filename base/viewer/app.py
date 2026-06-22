@@ -6,7 +6,7 @@ point to inspect that flower's views. Run from this directory:
 
     python app.py            # http://127.0.0.1:5000
 
-Needs the core env (torch/numpy/pandas/Flask) — installed with bud-analysis-core.
+Needs the core env (torch/numpy/pandas/Flask) — installed with base.
 """
 
 from flask import Flask

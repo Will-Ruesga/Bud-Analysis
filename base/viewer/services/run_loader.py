@@ -15,9 +15,9 @@ from pathlib import Path
 import numpy as np
 import torch
 
-# The viewer lives inside the core repo (bud-analysis-core/viewer); make the
+# The viewer lives inside the core repo (base/viewer); make the
 # `core` package importable when run from source, without relying on an install.
-_REPO = Path(__file__).resolve().parents[2]          # bud-analysis-core/
+_REPO = Path(__file__).resolve().parents[2]          # base/
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 

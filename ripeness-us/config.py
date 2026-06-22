@@ -13,7 +13,7 @@ from pathlib import Path
 import core
 from core.schemas import HeadSpec
 
-# All run outputs land here — a sibling of bud-analysis-core and ripeness,
+# All run outputs land here — a sibling of base and ripeness,
 # not nested inside either. Anchored to this file so it is CWD-independent.
 OUTPUT_DIR = str(Path(__file__).resolve().parent.parent / "output")
 

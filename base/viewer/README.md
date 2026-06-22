@@ -23,11 +23,11 @@ cached embedding, so per-view values are available for any aggregation.
 ## Run
 
 The viewer ships inside the core repo and imports `core`; Flask is a core
-dependency, so any venv with `bud-analysis-core` installed can run it:
+dependency, so any venv with `base` installed can run it:
 
 ```bash
-cd bud-analysis-core/viewer
-source <any-task-venv>/bin/activate     # any venv with bud-analysis-core installed
+cd base/viewer
+source <any-task-venv>/bin/activate     # any venv with base installed
 python app.py                           # http://127.0.0.1:5000
 ```
 
