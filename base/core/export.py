@@ -25,12 +25,17 @@ def export(
     output_path: Path | None = None,
     opset_version: int = 18,
     device: str = "auto",
+    per_view: bool = False,
 ) -> Path:
     """Export the requested heads into one self-contained ONNX file.
 
     `heads` is a list of `(task, variant)`; `variant == "auto"` resolves to the
     lowest-`selection_score` variant under `<task>/`. Defaults to
     `[(ctx.task, "auto")]`. Returns the written `.onnx` path.
+
+    `per_view=False` (ripeness-trs): MIL-aggregate the views → one score per
+    batch item, output `(B,)`. `per_view=True` (ripeness-us): no aggregation →
+    one score per view, output `(B, V)`. Per-view supports a single head only.
     """
     if heads is None:
         heads = [(ctx.task, "auto")]
@@ -38,6 +43,8 @@ def export(
     resolved = [_resolve_head(ctx, task, agg) for task, agg in heads]
     if not resolved:
         raise ValueError("no heads to export")
+    if per_view and len(resolved) != 1:
+        raise ValueError("per_view export supports a single head only")
 
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -48,16 +55,15 @@ def export(
     # The one pipeline feeds every head all views (mil_mean late fusion). The
     # graph bakes the run's frozen image_size into its preprocess op.
     image_size = ctx.image_size
-    graph = _ExportGraph(backbone, resolved, ctx.backbone_name, image_size).to(device).eval()
+    graph = _ExportGraph(backbone, resolved, ctx.backbone_name, image_size, per_view).to(device).eval()
 
     if output_path is None:
         output_path = ctx.onnx_dir / _default_filename(ctx, resolved)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # The view dimension is baked into the graph (not a dynamic axis), so it must
-    # match the run's declared view set (1..N). Read it from the manifest — the
-    # single source of truth; no hard-coded view count or fallback.
+    # Trace at the run's view count, but the view axis is dynamic (below), so the
+    # exported graph accepts any number of views at inference.
     n_views = len(ctx.info()["views"])
     dummy = torch.zeros(
         1, n_views, image_size, image_size, 3, device=device
@@ -68,7 +74,10 @@ def export(
         str(output_path),
         input_names=["images"],
         output_names=["scores"],
-        dynamic_axes={"images": {0: "batch", 2: "height", 3: "width"}, "scores": {0: "batch"}},
+        dynamic_axes={
+            "images": {0: "batch", 1: "views", 2: "height", 3: "width"},
+            "scores": {0: "batch", 1: "views"} if per_view else {0: "batch"},
+        },
         opset_version=opset_version,
         dynamo=False,  # legacy TorchScript exporter — avoids the onnxscript dependency
     )
@@ -127,15 +136,18 @@ def _default_filename(ctx: RunContext, resolved) -> str:
 
 
 class _ExportGraph(nn.Module):
-    """Traceable graph: (B,V,H,W,3) → preprocess → backbone (per view) → per-head
-    `mil_pool` → concat → (B,) or (B,N). Every head consumes all V views."""
+    """Traceable graph: (B,V,H,W,3) → preprocess → backbone (per view) → head(s).
 
-    def __init__(self, backbone, resolved, backbone_name, image_size):
+    `per_view=False`: MIL-aggregate the views per head → concat → (B,) or (B,N).
+    `per_view=True`: no aggregation, single head → one score per view → (B, V)."""
+
+    def __init__(self, backbone, resolved, backbone_name, image_size, per_view):
         super().__init__()
         self.backbone = backbone
         self.heads = nn.ModuleList([head for _, _, _, head in resolved])
         self.backbone_name = backbone_name
         self.image_size = image_size
+        self.per_view = per_view
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x.float()
@@ -144,6 +156,11 @@ class _ExportGraph(nn.Module):
         x = x.reshape(b * v, x.shape[2], x.shape[3], x.shape[4])
         x = backbones.preprocess(x, self.backbone_name, self.image_size)  # same op as eval_transform
         feats = self.backbone(x).reshape(b, v, -1)  # (B, V, D)
+
+        if self.per_view:
+            # One score per view, no MIL mean; same per-view op mil_pool runs first.
+            head = self.heads[0]
+            return head(feats.reshape(b * v, feats.shape[2])).reshape(b, v)  # (B, V)
 
         outs = [mil_pool(head, feats) for head in self.heads]  # each (B, 1)
         out = torch.cat(outs, dim=1)  # (B, N)

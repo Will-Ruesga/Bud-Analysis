@@ -16,15 +16,11 @@ def _parse_heads(spec_list):
 
 
 def main(run_dir, variant=None, heads=None, output_path=None):
-    """Resolve the requested head(s) for a prepared run and export them to one ONNX file.
-
-    per_view=True: the views are the buds of a flower and are scored independently
-    (no MIL aggregation) — output is (B, V), one ripeness per bud in input order.
-    """
+    """Resolve the requested head(s) for a prepared run and export them to one ONNX file."""
     ctx = RunContext.from_info_json(run_dir)
     if heads is None:
         heads = [(ctx.task, variant or "auto")]
-    return core_export.export(ctx, heads=heads, output_path=output_path, per_view=True)
+    return core_export.export(ctx, heads=heads, output_path=output_path)
 
 
 if __name__ == "__main__":
