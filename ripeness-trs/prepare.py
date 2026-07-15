@@ -137,23 +137,33 @@ def discover(data_dir, targets, views):
     return rows
 
 
-def _clear_stale_cache(ctx, data_dir: Path) -> None:
-    """Drop stale embeddings + trained outputs if the dataset changed.
+def _clear_stale_cache(ctx, data_dir: Path, crop_mode: str) -> None:
+    """Drop stale embeddings + trained outputs if the run's *pixels* changed.
 
     A run dir is named by date+cultivar+backbone, so re-preparing the same
     identity against a *different* dataset (e.g. a newer capture) would leave
     `emb/` and the trained head pointing at the old images. When the manifest's
     recorded `data_dir` differs from the new one, wipe `emb/` and the task dir
     so prep, embeddings, and the head stay consistent.
+
+    `crop_mode` is checked for the same reason and is the more dangerous of the
+    two: the cache is keyed by imageID alone, so re-preparing a run with a new
+    crop and the same name would silently reuse embeddings of the *uncropped*
+    pixels — an invisible wrong answer rather than a loud failure.
     """
     if not ctx.prep_info_json.is_file():
         return
-    old = json.loads(ctx.prep_info_json.read_text()).get("data_dir")
-    if old and Path(old) != data_dir:
+    old = json.loads(ctx.prep_info_json.read_text())
+    changed = []
+    if (old_dir := old.get("data_dir")) and Path(old_dir) != data_dir:
+        changed.append(f"dataset ({old_dir} -> {data_dir})")
+    if (old_crop := old.get("crop_mode", "none")) != crop_mode:
+        changed.append(f"crop_mode ({old_crop} -> {crop_mode})")
+    if changed:
         for d in (ctx.embeddings_dir, ctx.task_dir):
             if d.exists():
                 shutil.rmtree(d)
-        print(f"dataset changed ({old} -> {data_dir}); cleared stale emb/ + {ctx.task}/")
+        print(f"{'; '.join(changed)} changed; cleared stale emb/ + {ctx.task}/")
 
 
 def _config_snapshot(config) -> dict:
@@ -188,7 +198,7 @@ def _compare_grid(config, selected) -> dict[str, list]:
 
 
 def main(config, data_dir, cultivar, backbone=None, views=None,
-         val_ratio=0.15, test_ratio=0.15, seed=None, compare=None):
+         val_ratio=0.15, test_ratio=0.15, seed=None, compare=None, crop_mode=None):
     """Scan the dataset → write `<run>/prep/{index.csv, info.json}`; return the run dir.
 
     `data_dir` is the raw dataset folder; its absolute path is recorded in the
@@ -196,9 +206,12 @@ def main(config, data_dir, cultivar, backbone=None, views=None,
     `backbone` selects the checkpoint from `config.BACKBONE_CHECKPOINTS`
     (defaults to `config.BACKBONE_NAME`); `cultivar` names the run (required).
     `views` is a `{page_index: view_name}` map (see `parse_views`); when None it
-    falls back to `config.VIEWS` (positional).
+    falls back to `config.VIEWS` (positional). `crop_mode` is the pixel crop frozen
+    into the manifest (defaults to `config.CROP_MODE`); `embeddings` and `export`
+    both read it back from there, so the crop can never differ between them.
     """
     backbone = backbone or config.BACKBONE_NAME
+    crop_mode = crop_mode or config.CROP_MODE
     view_map = views if views is not None else {i: v for i, v in enumerate(config.VIEWS)}
     view_names = [view_map[i] for i in sorted(view_map)]
     ctx = RunContext(
@@ -209,7 +222,7 @@ def main(config, data_dir, cultivar, backbone=None, views=None,
         backbone_checkpoint=config.BACKBONE_CHECKPOINTS[backbone],
         output_dir=config.OUTPUT_DIR,
     )
-    _clear_stale_cache(ctx, Path(data_dir).resolve())
+    _clear_stale_cache(ctx, Path(data_dir).resolve(), crop_mode)
     scan = functools.partial(discover, views=view_map)
     df = data.run(
         ctx,
@@ -221,7 +234,12 @@ def main(config, data_dir, cultivar, backbone=None, views=None,
         seed=seed if seed is not None else config.HPARAMS["seed"],
         discover=scan,
         incomplete_tolerance=config.INCOMPLETE_TOLERANCE,
-        extra={**_config_snapshot(config), "compare": _compare_grid(config, compare)},
+        extra={
+            **_config_snapshot(config),
+            "compare": _compare_grid(config, compare),
+            "crop_mode": crop_mode,
+            "production_distribution": config.PRODUCTION_DISTRIBUTION,
+        },
     )
     plotting.plot_dataset_distribution(ctx, df)
     return ctx.root
@@ -242,6 +260,9 @@ if __name__ == "__main__":
                     help="view groups, e.g. 'side: 0 1 2 3, top: 4'; omit to be prompted")
     ap.add_argument("--compare", nargs="*", default=[], choices=list(cfg.COMPARE_DIMS),
                     help="dims to compare (cross-product); omitted dims use their default")
+    ap.add_argument("--crop", dest="crop_mode", default=cfg.CROP_MODE, choices=["none", "adaptive"],
+                    help="pixel crop before the backbone; 'adaptive' keeps only the "
+                         "largest centred all-flower circle")
     ap.add_argument("--val_ratio", type=float, default=0.15)
     ap.add_argument("--test_ratio", type=float, default=0.15)
     ap.add_argument("--seed", type=int)
@@ -260,5 +281,6 @@ if __name__ == "__main__":
     run = main(
         cfg, data_dir=a.data_dir, backbone=a.backbone, cultivar=a.cultivar, views=view_map,
         val_ratio=a.val_ratio, test_ratio=a.test_ratio, seed=a.seed, compare=a.compare,
+        crop_mode=a.crop_mode,
     )
     print(f"prepared run: {run}")

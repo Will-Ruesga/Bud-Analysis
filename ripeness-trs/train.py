@@ -33,8 +33,51 @@ def _mae(p, t):
     return float(torch.mean(torch.abs(p - t)))
 
 
+def _weighted_rmse(p, t, w):
+    """RMSE with per-sample weights `w` (N, 1) — the error under a reweighted mix."""
+    return float(torch.sqrt((w * (p - t) ** 2).sum() / w.sum()))
+
+
+def _weighted_mae(p, t, w):
+    return float((w * torch.abs(p - t)).sum() / w.sum())
+
+
 def _loss_fn(name):
-    return nn.HuberLoss() if name == "huber" else nn.MSELoss()
+    # reduction="none": the balance dim weights the per-sample loss itself, so the
+    # reduction has to happen here rather than inside the criterion.
+    return nn.HuberLoss(reduction="none") if name == "huber" else nn.MSELoss(reduction="none")
+
+
+def _production_mix(info):
+    """`config.PRODUCTION_DISTRIBUTION` (frozen in the manifest) → the two maps
+    `core.data`'s balancing helpers take: `{class: group}` and `{group: proportion}`."""
+    dist = info["production_distribution"]
+    group_of = {c: g for g, spec in dist.items() for c in spec["classes"]}
+    target = {g: float(spec["proportion"]) for g, spec in dist.items()}
+    return group_of, target
+
+
+def _fit_selection(balance, classes, flower_ids, train_mask, group_of, target, seed):
+    """`(fit_mask, fit_weights)` for one `balance` variant — which train rows the head
+    sees and how much each counts.
+
+    Only ever narrows the **train** split; val/test are untouched by design, so all
+    three variants are scored on identical rows (see `_objective`). `off` is the
+    dataset as collected; `reweight` keeps every row and reweights the loss;
+    `subsample` drops whole flowers and leaves the survivors at weight 1.
+    """
+    if balance == "reweight":
+        return train_mask, data.group_weights(classes[train_mask], group_of, target)
+    if balance == "subsample":
+        keep = data.subsample_groups(
+            flower_ids[train_mask], classes[train_mask], group_of, target, seed
+        )
+        fit_mask = train_mask.copy()
+        fit_mask[np.flatnonzero(train_mask)] = keep
+        return fit_mask, np.ones(int(fit_mask.sum()))
+    if balance != "off":
+        raise ValueError(f"unknown balance {balance!r}")
+    return train_mask, np.ones(int(train_mask.sum()))
 
 
 def _view_spread(per_view):
@@ -110,18 +153,41 @@ def _objective(trial, ctx, index, emb, settings, scratch):
     loss_name = chosen["loss"]
     # consistency "on" → λ is searched; "off" (or single-view tasks without the dim) → λ=0.
     consistency_on = chosen.get("consistency", "on") == "on"
+    balance = chosen.get("balance", "off")
     spec = settings.HEAD_SPEC
     lam = _suggest_lambda(trial, settings.OPT_SEARCH_SPACE) if consistency_on else 0.0
     beta = settings.HPARAMS.get("robustness_beta", 0.0)
+    seed = settings.HPARAMS["seed"]
 
     samples, keys = aggregators.stack_views(index, emb, settings.VIEW_TYPES)
     meta = _per_key_meta(index)
     split = np.array([meta[k]["split"] for k in keys])
+    classes = np.array([meta[k]["class"] for k in keys])
+    flower_ids = np.array([k[0] for k in keys])
     y = torch.tensor([meta[k]["target"] for k in keys], dtype=torch.float32).unsqueeze(1)
     X = torch.tensor(samples, dtype=torch.float32)
 
     train_mask = split == "train"
     val_mask, test_mask = split == "val", split == "test"
+
+    # `balance` narrows/reweights the train split only. The subsample draw is seeded
+    # from the run (not the trial) so every trial of that variant fits the same
+    # flowers — otherwise the draw itself would add noise to the comparison.
+    group_of, target_mix = settings.PRODUCTION_MIX
+    fit_mask, fit_w = _fit_selection(
+        balance, classes, flower_ids, train_mask, group_of, target_mix, seed
+    )
+    w_fit = torch.tensor(fit_w, dtype=torch.float32).unsqueeze(1)
+
+    # Evaluation weights are computed per split and applied to *every* variant, so
+    # `off`/`reweight`/`subsample` are all scored on the same rows under the same
+    # production mix. This is what keeps the three comparable.
+    w_val = torch.tensor(
+        data.group_weights(classes[val_mask], group_of, target_mix), dtype=torch.float32
+    ).unsqueeze(1)
+    w_test = torch.tensor(
+        data.group_weights(classes[test_mask], group_of, target_mix), dtype=torch.float32
+    ).unsqueeze(1)
 
     head = heads.build(spec, ctx.backbone_name)
     epochs = settings.HPARAMS["epochs"]
@@ -132,11 +198,13 @@ def _objective(trial, ctx, index, emb, settings, scratch):
     for epoch in range(epochs):
         head.train()
         opt.zero_grad()
-        pred, per_view = _forward(head, X[train_mask], return_views=True)
+        pred, per_view = _forward(head, X[fit_mask], return_views=True)
         # MSE on the round prediction + λ · mean per-round variance across views.
         # Variance (not std/range): smooth gradient, → 0 cleanly as views agree.
         consistency = per_view.var(dim=1, unbiased=False).mean()
-        loss = loss_fn(pred, y[train_mask]) + lam * consistency
+        # Weighted mean over samples (w_fit is all-ones unless balance="reweight").
+        accuracy = (w_fit * loss_fn(pred, y[fit_mask])).sum() / w_fit.sum()
+        loss = accuracy + lam * consistency
         loss.backward()
         opt.step()
         sched.step()
@@ -147,9 +215,10 @@ def _objective(trial, ctx, index, emb, settings, scratch):
         history.append({
             "epoch": epoch,
             "train_loss": float(loss.detach()),
-            "val_loss": float(loss_fn(pv, y[val_mask])),
+            "val_loss": float(loss_fn(pv, y[val_mask]).mean()),
             "val_rmse": _rmse(pv, y[val_mask]),
             "val_mae": _mae(pv, y[val_mask]),
+            "val_rmse_prod": _weighted_rmse(pv, y[val_mask], w_val),
         })
 
     head.eval()
@@ -162,13 +231,21 @@ def _objective(trial, ctx, index, emb, settings, scratch):
     round_std = _round_to_round_std(pt.squeeze(1).numpy(), test_keys)
     val_view_range, _ = _view_spread(pv_val)                # selection uses val, not test
     # Robustness-aware selection: accuracy + β · view disagreement (lower is better).
-    selection_score = history[-1]["val_rmse"] + beta * val_view_range
+    # The accuracy term is the *production-weighted* val RMSE, so Optuna optimises for
+    # the mix the line will see rather than the mix that happened to be collected.
+    selection_score = history[-1]["val_rmse_prod"] + beta * val_view_range
 
     metrics = {
+        # `rmse`/`mae` stay on the dataset's own mix — unweighted and directly
+        # comparable to every run predating the balance dim. `*_prod` are the same
+        # errors under PRODUCTION_DISTRIBUTION and are what selection reads.
         "rmse": _rmse(pt, y[test_mask]),
         "mae": _mae(pt, y[test_mask]),
+        "rmse_prod": _weighted_rmse(pt, y[test_mask], w_test),
+        "mae_prod": _weighted_mae(pt, y[test_mask], w_test),
         "val_rmse": history[-1]["val_rmse"],
         "val_mae": history[-1]["val_mae"],
+        "val_rmse_prod": history[-1]["val_rmse_prod"],
         "view_range": view_range,
         "view_std": view_std,
         "round_std": round_std,
@@ -176,6 +253,10 @@ def _objective(trial, ctx, index, emb, settings, scratch):
         "selection_score": selection_score,
         "loss": loss_name,
         "consistency": "on" if consistency_on else "off",
+        "balance": balance,
+        # Flowers actually fitted — makes subsample's cost visible next to its score.
+        "n_fit_samples": int(fit_mask.sum()),
+        "n_fit_flowers": int(len(set(flower_ids[fit_mask]))),
         "compare_value": compare_value,   # variant id = compared dims' values (kept-dir name)
         "compare_axis": ",".join(compared) if compared else "none",  # viewer reads this
         "lambda_consistency": lam,
@@ -246,6 +327,9 @@ def main(run_dir, overrides=None):
         COMPARE=info["compare"],
         # The run's declared views (any count); stack_views takes these explicitly.
         VIEW_TYPES=info["views"],
+        # ({class: group}, {group: proportion}) — read from the manifest, not config,
+        # so a run keeps the mix it was prepared with even if config.py later moves.
+        PRODUCTION_MIX=_production_mix(info),
     )
 
     emb = embeddings.extract(ctx)
